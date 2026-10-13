@@ -27,6 +27,8 @@ function kind(p){const t=(String(p.type||"")+" "+String(p.notes||"")).toUpperCas
   if(/CONDO/.test(t))return"Condo";if(/TOWN/.test(t))return"Townhome";if(/DUPLEX|TRIPLEX|QUAD|MULTI|APART/.test(t))return"Multi-family";
   if(/COMM|OFFICE|STORE|RETAIL|WAREHOUSE|MIXED|CHURCH/.test(t))return"Commercial";return"Single family"}
 const dense=p=>/RM|RH|MF|RMH|R-3|R-4|T5|T4|T6|MU|C-|CG|CC|CB|YC|RD|DT|MXD/.test(String(p.zoning||"").toUpperCase());
+const pidDashed=p=>{const d=String(p.pid||"").replace(/\D/g,"");return p.county==="Palm Beach"&&d.length===17?[d.slice(0,2),d.slice(2,4),d.slice(4,6),d.slice(6,8),d.slice(8,10),d.slice(10,13),d.slice(13)].join("-"):""};
+const copyBtn=(val,label)=>val?`<button class="copy" data-copy="${esc(val)}" title="Copy ${esc(label)}"><span class="cl">${esc(label)}</span> <span class="cv">${esc(val)}</span> <span class="ci">Copy</span></button>`:"";
 const newId=()=>"p"+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 const safeId=s=>String(s||"").replace(/[^A-Za-z0-9_-]/g,"").slice(0,120);
 
@@ -315,7 +317,7 @@ function card(p,extraTag){
      <span class="ptype">${esc(p.channel||"")}</span>${n?`<span class="nphotos">${n} photo${n>1?"s":""}</span>`:""}</div>
    <div class="cbody">
      <div class="price"><b>${money(num(p.bid))}</b><span class="vs">${listing?"asking":"opening bid"}<br>value ${moneyK(k.V)}</span></div>
-     <div class="caddr">${esc(p.addr)}</div><div class="ccity">${esc(p.city)}${p.county?" · "+esc(p.county):""}</div>
+     <div class="caddr">${esc(p.addr)}</div><div class="ccity">${esc(p.city)}${p.county?" · "+esc(p.county):""}</div>${p.pid?`<div class="cpid">Parcel <button class="copy mini" data-copy="${esc(p.pid)}" title="Copy parcel ID">${esc(p.pid)} <span class="ci">Copy</span></button></div>`:""}
      <div class="tags">${tags}</div>
      <div class="cfoot">${disc}<span class="pill ${k.cls}">${scoreLabel(k)}</span></div>
    </div></article>`;
@@ -323,7 +325,7 @@ function card(p,extraTag){
 function filtered(){
   const q=$("#q").value.trim().toLowerCase(), c=$("#fCounty").value, ch=$("#fChannel").value, t=$("#fTier").value, s=$("#fStatus").value, past=$("#fPast").checked, sort=$("#fSort").value;
   const rows=props.filter(p=>(past||isUpcoming(p))&&(!c||p.county===c)&&(!ch||p.channel===ch)&&(!t||(p.tier||"")===t)&&(!s||(p.status||"Watching")===s)
-    &&(!q||[p.addr,p.city,p.case,p.plaintiff,p.owner,p.type,p.zoning].join(" ").toLowerCase().includes(q)));
+    &&(!q||[p.addr,p.city,p.case,p.plaintiff,p.owner,p.type,p.zoning,p.pid].join(" ").toLowerCase().includes(q)));
   const K=new Map(rows.map(p=>[p._id,calc(p)])); const sc=id=>{const k=K.get(id);return k.ai?k.score:k.pre};
   const by={date:(a,b)=>dkey(a.date).localeCompare(dkey(b.date))||String(a.addr).localeCompare(String(b.addr)),
     score:(a,b)=>sc(b._id)-sc(a._id), disc:(a,b)=>(K.get(b._id).discPct??-9)-(K.get(a._id).discPct??-9),
@@ -355,7 +357,7 @@ function renderList(){
     $("#addFromQ").onclick=()=>{openAdd();$("#f_addr").value=q.toUpperCase()};
     $("#tbody").innerHTML="";return}
   if(view==="cards")$("#cards").innerHTML=rows.map(p=>card(p)).join("");
-  else if(view==="table")$("#tbody").innerHTML=rows.map(p=>{const k=calc(p);return `<tr class="item" data-id="${esc(p._id)}" tabindex="0"><td class="num">${esc(p.date)}</td><td><b>${esc(p.addr)}</b><br><span class="muted small">${esc(p.city)}</span></td><td>${esc(p.county)}</td><td class="small">${esc(p.channel)}<br><span class="muted">${esc(kind(p))}</span></td><td class="r num">${money(num(p.bid))}</td><td class="r num">${money(k.V)}</td><td class="r num">${k.discPct!=null?Math.round(k.discPct*100)+"%":"—"}</td><td><span class="pill ${tierCls(p.tier)}">${esc(p.tier||"—")}</span></td><td><span class="pill ${k.cls}">${scoreLabel(k)}</span></td><td class="small">${esc(p.status||"Watching")}</td></tr>`}).join("");
+  else if(view==="table")$("#tbody").innerHTML=rows.map(p=>{const k=calc(p);return `<tr class="item" data-id="${esc(p._id)}" tabindex="0"><td class="num">${esc(p.date)}</td><td><b>${esc(p.addr)}</b><br><span class="muted small">${esc(p.city)}</span>${p.pid?`<br><button class="copy mini" data-copy="${esc(p.pid)}">${esc(p.pid)} <span class="ci">Copy</span></button>`:""}</td><td>${esc(p.county)}</td><td class="small">${esc(p.channel)}<br><span class="muted">${esc(kind(p))}</span></td><td class="r num">${money(num(p.bid))}</td><td class="r num">${money(k.V)}</td><td class="r num">${k.discPct!=null?Math.round(k.discPct*100)+"%":"—"}</td><td><span class="pill ${tierCls(p.tier)}">${esc(p.tier||"—")}</span></td><td><span class="pill ${k.cls}">${scoreLabel(k)}</span></td><td class="small">${esc(p.status||"Watching")}</td></tr>`}).join("");
   else renderBigMap(rows);
   renderForYou();
 }
@@ -394,7 +396,7 @@ let sugIdx=-1;
 function suggest(){
   const q=$("#q").value.trim().toLowerCase(), box=$("#sugg");
   if(q.length<2){box.hidden=true;return}
-  const hits=props.filter(p=>[p.addr,p.city,p.case,p.plaintiff,p.owner].join(" ").toLowerCase().includes(q)).slice(0,8);
+  const hits=props.filter(p=>[p.addr,p.city,p.case,p.plaintiff,p.owner,p.pid].join(" ").toLowerCase().includes(q)).slice(0,8);
   let html=hits.map(p=>`<button data-open-id="${esc(p._id)}"><span class="pill ${tierCls(p.tier)}" style="font-size:10.5px">${esc(p.tier||"NEW")}</span><span class="addr"><b>${esc(p.addr)}</b> <span class="muted">${esc(p.city)}</span></span><span class="num small">${money(num(p.bid))}</span></button>`).join("");
   if(!hits.length){const prof=queryProfile(q);const sim=props.filter(isUpcoming).map(x=>({x,s:similarity(prof,x)})).sort((a,b)=>b.s-a.s).slice(0,4).filter(o=>o.s>=2);
     html=`<div class="hint">Not on your list yet. Press <b>+ Add</b> to add it. Similar properties:</div>`+sim.map(o=>`<button data-open-id="${esc(o.x._id)}"><span class="tag">similar</span><span class="addr"><b>${esc(o.x.addr)}</b> <span class="muted">${esc(o.x.city)}</span></span><span class="num small">${money(num(o.x.bid))}</span></button>`).join("")}
@@ -439,7 +441,9 @@ function renderDetail(fresh){
   <div class="panel">
    <div class="dhead">
      <div style="min-width:0"><div class="row" style="gap:8px"><span class="pill ${tierCls(p.tier)}">${esc(p.tier||"NEW")}</span><span class="small muted">${esc(p.county)} · ${esc(p.channel)} · ${esc(kind(p))}</span></div>
-       <h2 style="margin-top:4px;font-size:22px">${esc(p.addr)}</h2><p class="muted">${esc(p.city)} · ${listing?"Listed":"Sale"} ${esc(p.date||"—")} · ${listing?"MLS":"Case"} <span class="num">${esc(p.case||"—")}</span></p></div>
+       <h2 style="margin-top:4px;font-size:22px">${esc(p.addr)}</h2><p class="muted">${esc(p.city)} · ${listing?"Listed":"Sale"} ${esc(p.date||"—")} · ${listing?"MLS":"Case"} <span class="num">${esc(p.case||"—")}</span></p>
+       <div class="copybar">${copyBtn(p.pid,"Parcel ID")}${copyBtn(pidDashed(p),"With dashes")}${copyBtn(p.case,listing?"MLS #":"Case #")}${copyBtn(p.addr,"Address")}${copyBtn(p.owner,"Owner")}</div>
+       ${p.pid?`<p class="small muted">Tip: county search pages find properties by <b>Parcel ID</b> or <b>case number</b>, not by street address. Click a button to copy, then paste with Cmd+V.</p>`:`<p class="small muted">No parcel ID saved yet. Find it on the Property Appraiser site and add it below.</p>`}</div>
      <div class="row"><label class="small">Status <select id="d_status">${STATUSES.map(s=>`<option${(p.status||"Watching")===s?" selected":""}>${s}</option>`).join("")}</select></label><button id="d_del" class="ghost small">Delete</button><button id="closeDetail" class="ghost">Close</button></div>
    </div>
    ${renderGallery(p)}
@@ -501,6 +505,7 @@ function renderDetail(fresh){
     </dl>
     <div class="formgrid">
      <label>Your comp value ($)<input id="d_comp" inputmode="decimal" value="${esc(p.comp??"")}" placeholder="what it would really sell for"></label>
+     <label>Parcel ID<input id="d_pid" value="${esc(p.pid??"")}" placeholder="e.g. 00414725020003580"></label>
      <label>Bid / asking ($)<input id="d_bid" inputmode="decimal" value="${esc(p.bid??"")}"></label>
      <label style="flex-direction:row;align-items:center;gap:8px;margin-top:18px"><input type="checkbox" id="d_vacant"${p.vacant?" checked":""}> Vacant land (no rehab)</label>
     </div>
@@ -567,6 +572,7 @@ function wireDetail(p){
   $("#d_status").onchange=e=>Store.patch(id,{status:e.target.value});
   $("#d_comp").onchange=e=>Store.patch(id,{comp:num(e.target.value)});
   $("#d_bid").onchange=e=>Store.patch(id,{bid:num(e.target.value)});
+  $("#d_pid").onchange=e=>Store.patch(id,{pid:e.target.value.replace(/[^0-9A-Za-z]/g,"")});
   $("#d_vacant").onchange=e=>Store.patch(id,{vacant:e.target.checked});
   $("#d_notes").oninput=e=>patchLater(id,"dnotes",e.target.value);
   $("#d_records").oninput=e=>patchLater(id,"records",e.target.value.slice(0,80000));
@@ -740,7 +746,12 @@ function openSettings(){
 }
 
 /* ---------- events & boot ---------- */
+async function copyText(t){
+  try{await navigator.clipboard.writeText(t);toast("Copied: "+t)}
+  catch{const ta=document.createElement("textarea");ta.value=t;document.body.appendChild(ta);ta.select();try{document.execCommand("copy");toast("Copied: "+t)}catch{toast("Select and copy: "+t)}ta.remove()}
+}
 document.addEventListener("click",e=>{
+  const cp=e.target.closest("[data-copy]");if(cp){e.preventDefault();e.stopPropagation();copyText(cp.dataset.copy);return}
   const o=e.target.closest("[data-open-id]");if(o){openDetail(o.dataset.openId);return}
   const s=e.target.closest("[data-open]");if(s&&s.dataset.open==="settings"){openSettings();return}
   const c=e.target.closest(".card,tr.item");if(c&&c.dataset.id&&!e.target.closest("a,button[data-gal]")){openDetail(c.dataset.id);return}

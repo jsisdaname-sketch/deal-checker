@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>South FL Deal Checker</title>
+<meta name="robots" content="noindex,nofollow">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="top"><div class="wrap gutter">
+  <h1>Deal Checker</h1>
+  <div class="search">
+    <input id="q" placeholder="Type an address, city, ZIP, case number or plaintiff" autocomplete="off" aria-label="Search properties">
+    <div class="sugg" id="sugg" hidden></div>
+  </div>
+  <div class="filters">
+    <select id="fCounty" aria-label="County"><option value="">All counties</option><option>Palm Beach</option><option>Broward</option><option>Miami-Dade</option></select>
+    <select id="fChannel" aria-label="Sale type"><option value="">All sale types</option><option>Foreclosure</option><option>Foreclosure (HOA)</option><option>Tax Deed</option><option>Listing (MLS)</option><option>Off-market</option></select>
+    <select id="fTier" aria-label="Tier"><option value="">All tiers</option><option>GREEN</option><option>ORANGE</option><option>GREY</option><option>RED</option></select>
+    <select id="fStatus" aria-label="Status"><option value="">Any status</option></select>
+    <select id="fSort" aria-label="Sort"><option value="date">Soonest sale</option><option value="score">Best deal score</option><option value="disc">Biggest discount</option><option value="value">Highest value</option><option value="bid">Lowest bid</option></select>
+    <label><input type="checkbox" id="fPast"> Past sales</label>
+    <div class="seg" role="tablist"><button id="vCards" class="on">Cards</button><button id="vMap">Map</button><button id="vTable">Table</button></div>
+    <button id="addBtn" class="primary">+ Add</button>
+    <button id="setBtn" title="Settings">Settings</button>
+  </div>
+</div></div>
+
+<div class="wrap gutter">
+  <div id="modeBar" class="modebar"></div>
+  <p class="notice"><b>AI title attorney:</b> answers like a Florida title attorney reviewing the records you give it. It is still AI, not your lawyer and not title insurance. Get a written title report before you bid real money.</p>
+
+  <section class="panel" id="setPanel" hidden></section>
+  <section class="panel" id="addPanel" hidden></section>
+
+  <div class="strip" id="strip"></div>
+
+  <section class="sec" id="forYouSec" hidden>
+    <div class="sechead"><div><h2>Picked for you</h2><p class="small muted" id="forYouWhy"></p></div></div>
+    <div class="hrow" id="forYou"></div>
+  </section>
+
+  <section class="sec">
+    <div class="sechead"><h2 id="listTitle">Upcoming sales</h2><span class="small muted" id="listMsg"></span></div>
+    <div id="cards" class="grid"></div>
+    <div id="mapWrap" hidden><div id="bigMap" class="bigmap"></div><p class="small muted" id="mapMsg"></p></div>
+    <div id="tablewrap" class="tablewrap" hidden><table><thead><tr><th>Sale</th><th>Address</th><th>County</th><th>Type</th><th class="r">Bid</th><th class="r">Value</th><th class="r">Discount</th><th>Tier</th><th>Score</th><th>Status</th></tr></thead><tbody id="tbody"></tbody></table></div>
+  </section>
+
+  <section id="detail" class="detail" hidden></section>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

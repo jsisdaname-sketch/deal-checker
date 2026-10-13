@@ -1,5 +1,6 @@
 /* Layout: sticky search bar; cards / map / table views; full property page below when one is opened. */
 :root{
+  --excel:#00a844; --excel-ink:#ffffff; --yellow:#8a6d00; --yellow-bg:#fff4c2; --aside-bg:#e9ebee;
   --bg:#f5f6f8; --panel:#ffffff; --ink:#18212b; --muted:#5b6673; --line:#dfe3e8; --line2:#eef1f4;
   --accent:#0d5c8c; --accent-ink:#ffffff; --soft:#e8f1f8;
   --go:#1d7a46; --go-bg:#e2f3e8; --warn:#9a5b00; --warn-bg:#fdf0d9; --bad:#b3261e; --bad-bg:#fbe4e2; --grey:#5d6670; --grey-bg:#eceef1;
@@ -9,6 +10,7 @@
   color-scheme:light;
 }
 @media (prefers-color-scheme: dark){:root{
+  --excel:#3ff08a; --excel-ink:#062b14; --yellow:#ffd84d; --yellow-bg:#3a3210; --aside-bg:#2a3038;
   --bg:#11161c; --panel:#1a2129; --ink:#e6ebf0; --muted:#9aa6b2; --line:#2c3642; --line2:#232c36;
   --accent:#6fb3e3; --accent-ink:#0d1620; --soft:#1e2c3a;
   --go:#6fd59a; --go-bg:#173426; --warn:#f2b866; --warn-bg:#3a2c14; --bad:#ff8a80; --bad-bg:#3d1c1a; --grey:#aab3bd; --grey-bg:#262e37;
@@ -155,3 +157,17 @@ td.r,th.r{text-align:right}
 .copy:hover{border-color:var(--accent)}
 .copy.mini{padding:1px 6px;font-size:12px;font-family:var(--mono);border-radius:6px}
 .cpid{font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+
+.p-excel{background:var(--excel);color:var(--excel-ink);animation:excelPulse 1.4s ease-in-out infinite}
+.p-yellow{background:var(--yellow-bg);color:var(--yellow)}
+.p-aside{background:var(--aside-bg);color:var(--muted);text-decoration:line-through}
+@keyframes excelPulse{0%,100%{box-shadow:0 0 0 0 rgba(0,200,83,.75);opacity:1}50%{box-shadow:0 0 0 7px rgba(0,200,83,0);opacity:.75}}
+.card.excel{border-color:var(--excel);box-shadow:0 0 0 2px var(--excel),var(--shadow);animation:excelCard 1.6s ease-in-out infinite}
+@keyframes excelCard{0%,100%{box-shadow:0 0 0 2px var(--excel),0 0 14px rgba(0,200,83,.45)}50%{box-shadow:0 0 0 2px var(--excel),0 0 2px rgba(0,200,83,.1)}}
+.tierbtn{border:0;cursor:pointer;font:inherit;font-size:12px;font-weight:700;padding:2px 9px}
+.tierbtn:hover{filter:brightness(1.1);outline:2px solid var(--accent);outline-offset:1px}
+.tiermenu{position:absolute;z-index:3000;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:6px;display:flex;flex-direction:column;gap:2px;min-width:260px;max-width:calc(100vw - 16px)}
+.tiermenu button{display:flex;gap:10px;align-items:center;text-align:left;border:0;background:transparent;padding:7px 8px;border-radius:7px;font-weight:500}
+.tiermenu button:hover,.tiermenu button.on{background:var(--soft)}
+.tiermenu .pill{min-width:84px;text-align:center}
+@media (prefers-reduced-motion:reduce){.p-excel,.card.excel{animation:none}}

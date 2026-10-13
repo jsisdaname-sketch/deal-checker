@@ -115,8 +115,11 @@ function calc(p){
   else {out.verdict="PASS";out.cls="p-bad"}
   return out;
 }
-const tierCls=t=>({GREEN:"p-go",ORANGE:"p-warn",GREY:"p-grey",RED:"p-bad"}[t]||"p-grey");
-const tierColor=t=>({GREEN:"#1d7a46",ORANGE:"#d0790b",GREY:"#6b7480",RED:"#b3261e"}[t]||"#0d5c8c");
+const TIERS=[["EXCELLENT","We intend to bid"],["GREEN","Good deal"],["YELLOW","Maybe, keep watching"],["ORANGE","Needs a title check first"],["GREY","HOA sale, check the mortgage"],["RED","Skip"],["SET ASIDE","Set aside (hidden, not deleted)"]];
+const tierOf=p=>p.myTier||p.tier||"";
+const tierCls=t=>({EXCELLENT:"p-excel",GREEN:"p-go",YELLOW:"p-yellow",ORANGE:"p-warn",GREY:"p-grey",RED:"p-bad","SET ASIDE":"p-aside"}[t]||"p-grey");
+const tierColor=t=>({EXCELLENT:"#00c853",GREEN:"#1d7a46",YELLOW:"#c9a400",ORANGE:"#d0790b",GREY:"#6b7480",RED:"#b3261e","SET ASIDE":"#9aa3ad"}[t]||"#0d5c8c");
+const tierBtn=(p,extra="")=>`<button class="pill tierbtn ${tierCls(tierOf(p))} ${extra}" data-tier-id="${esc(p._id)}" title="Click to change the color tag">${esc(tierOf(p)||"NEW")} ▾</button>`;
 const scoreLabel=k=>k.verdict==="TITLE NOT CHECKED"?"Title not checked":k.verdict==="NEED NUMBERS"?"Need numbers":k.score+" · "+k.verdict;
 
 /* ---------- similarity ---------- */
@@ -244,7 +247,7 @@ Appraiser value: ${p.value??"unknown"}   Investor's own comp: ${p.comp??"none"}
 Land value: ${p.land??"unknown"}   Building value: ${p.bldg??"unknown"}
 Zoning: ${p.zoning||"unknown"}   Type: ${p.type||"unknown"}   Units: ${p.units||"?"}   Sq ft: ${p.sqft||"?"}   Year built: ${p.year||"?"}
 Vacant land: ${!!p.vacant}
-Watchlist tier: ${p.tier||"none"}   Watchlist note: ${p.notes||"none"}
+Tier: ${tierOf(p)||"none"}${p.myTier&&p.tier&&p.myTier!==p.tier?" (we changed it from "+p.tier+")":""}   Watchlist note: ${p.notes||"none"}
 Computed: discount to value ${k.discPct!=null?Math.round(k.discPct*100)+"%":"n/a"}, profit at opening bid ${k.profit!=null?Math.round(k.profit):"n/a"}, walk-away max bid ${k.maxBid!=null?Math.round(k.maxBid):"n/a"}, land share ${k.landShare!=null?Math.round(k.landShare*100)+"%":"n/a"}
 Partners' notes: ${(p.dnotes||"none").slice(0,6000)}`}
 
@@ -312,8 +315,8 @@ function card(p,extraTag){
   const tags=[kind(p),p.zoning?"Zoning "+p.zoning:null,k.landShare!=null&&k.landShare>=.5?["Land "+Math.round(k.landShare*100)+"% of value","good"]:null,extraTag].filter(Boolean)
     .map(t=>Array.isArray(t)?`<span class="tag ${t[1]}">${esc(t[0])}</span>`:`<span class="tag">${esc(t)}</span>`).join("");
   const listing=/Listing|Off-market/.test(p.channel||"");
-  return `<article class="card${p._id===selId?" sel":""}" data-id="${esc(p._id)}" tabindex="0" role="button" aria-label="${esc(p.addr)}">
-   <div class="hero" style="color:var(--muted)">${miniMap(p)}${heroImg(p)}<span class="pill ${tierCls(p.tier)} tier">${esc(p.tier||"NEW")}</span>
+  return `<article class="card${p._id===selId?" sel":""}${tierOf(p)==="EXCELLENT"?" excel":""}" data-id="${esc(p._id)}" tabindex="0" role="button" aria-label="${esc(p.addr)}">
+   <div class="hero" style="color:var(--muted)">${miniMap(p)}${heroImg(p)}${tierBtn(p,"tier")}
      ${d!=null?`<span class="days">${d<0?"Past":d===0?"Today":d===1?"Tomorrow":(listing?"":"Sale in ")+d+" days"}</span>`:""}
      <span class="ptype">${esc(p.channel||"")}</span>${n?`<span class="nphotos">${n} photo${n>1?"s":""}</span>`:""}</div>
    <div class="cbody">
@@ -325,11 +328,11 @@ function card(p,extraTag){
 }
 function filtered(){
   const q=$("#q").value.trim().toLowerCase(), c=$("#fCounty").value, ch=$("#fChannel").value, t=$("#fTier").value, s=$("#fStatus").value, past=$("#fPast").checked, sort=$("#fSort").value;
-  const rows=props.filter(p=>(past||isUpcoming(p))&&(!c||p.county===c)&&(!ch||p.channel===ch)&&(!t||(p.tier||"")===t)&&(!s||(p.status||"Watching")===s)
+  const rows=props.filter(p=>(past||isUpcoming(p))&&(!c||p.county===c)&&(!ch||p.channel===ch)&&(t?tierOf(p)===t:tierOf(p)!=="SET ASIDE")&&(!s||(p.status||"Watching")===s)
     &&(!q||[p.addr,p.city,p.case,p.plaintiff,p.owner,p.type,p.zoning,p.pid].join(" ").toLowerCase().includes(q)));
   const K=new Map(rows.map(p=>[p._id,calc(p)])); const sc=id=>{const k=K.get(id);return k.ai?k.score:k.pre};
   const by={date:(a,b)=>dkey(a.date).localeCompare(dkey(b.date))||String(a.addr).localeCompare(String(b.addr)),
-    score:(a,b)=>sc(b._id)-sc(a._id), disc:(a,b)=>(K.get(b._id).discPct??-9)-(K.get(a._id).discPct??-9),
+    score:(a,b)=>sc(b._id)-sc(a._id), tier:(a,b)=>TIERS.findIndex(x=>x[0]===tierOf(a))-TIERS.findIndex(x=>x[0]===tierOf(b))||dkey(a.date).localeCompare(dkey(b.date)), disc:(a,b)=>(K.get(b._id).discPct??-9)-(K.get(a._id).discPct??-9),
     value:(a,b)=>(K.get(b._id).V||0)-(K.get(a._id).V||0), bid:(a,b)=>(num(a.bid)??9e12)-(num(b.bid)??9e12)};
   return rows.sort(by[sort]||by.date);
 }
@@ -353,9 +356,10 @@ function renderList(){
   if(props.length&&!rows.length&&!q){em.hidden=false;em.innerHTML=`No properties match <b>${esc(act.join(" · "))}</b>${$("#fPast").checked?"":" (upcoming sales only)"}. Your list has ${props.length} properties in total, so try removing one filter. <button class="primary" data-clear="1" style="margin-left:8px">Clear filters</button>`}
   else em.hidden=true;
   $("#listTitle").textContent=q?`Results for “${q}”`:$("#fPast").checked?"All properties":"Upcoming sales";
-  $("#listMsg").textContent=props.length?`${rows.length} of ${props.length} properties`:"";
+  const nAside=props.filter(p=>tierOf(p)==="SET ASIDE").length;
+  $("#listMsg").innerHTML=props.length?`${rows.length} of ${props.length} properties${nAside&&$("#fTier").value!=="SET ASIDE"?` · ${nAside} set aside <button class="link" data-show-aside="1">show</button>`:""}`:"";
   const up=(act.length||q?rows:props).filter(p=>dkey(p.date)>=today), sfx=act.length||q?" (filtered)":"";
-  $("#strip").innerHTML=props.length?[[up.length,"upcoming sales"+sfx],[up.filter(p=>{const d=daysTo(p.date);return d!=null&&d<=7}).length,"selling in the next 7 days"],[up.filter(p=>p.tier==="GREEN").length,"GREEN"+sfx],[up.filter(p=>p.ai&&p.ai.result).length,"title-checked by AI"],[up.filter(p=>p.status==="Ready to bid").length,"marked Ready to bid"]].map(([n,l])=>`<div class="stat"><b>${n}</b><span>${l}</span></div>`).join(""):"";
+  $("#strip").innerHTML=props.length?[[up.length,"upcoming sales"+sfx],[up.filter(p=>{const d=daysTo(p.date);return d!=null&&d<=7}).length,"selling in the next 7 days"],[up.filter(p=>tierOf(p)==="EXCELLENT").length,"EXCELLENT (we intend to bid)"],[up.filter(p=>p.ai&&p.ai.result).length,"title-checked by AI"],[up.filter(p=>p.status==="Ready to bid").length,"marked Ready to bid"]].map(([n,l])=>`<div class="stat"><b>${n}</b><span>${l}</span></div>`).join(""):"";
   if(!props.length){
     $("#cards").innerHTML=`<div class="empty" style="grid-column:1/-1">${Store.mode==="login"?"Sign in (Settings) to see your shared list.":"No properties yet. Press <b>+ Add</b>, or open <b>Settings → Import</b> and load your watchlist file."}</div>`;
     $("#tbody").innerHTML="";renderForYou([]);return}
@@ -365,7 +369,7 @@ function renderList(){
     $("#addFromQ").onclick=()=>{openAdd();$("#f_addr").value=q.toUpperCase()};
     $("#tbody").innerHTML="";return}
   if(view==="cards")$("#cards").innerHTML=rows.map(p=>card(p)).join("");
-  else if(view==="table")$("#tbody").innerHTML=rows.map(p=>{const k=calc(p);return `<tr class="item" data-id="${esc(p._id)}" tabindex="0"><td class="num">${esc(p.date)}</td><td><b>${esc(p.addr)}</b><br><span class="muted small">${esc(p.city)}</span>${p.pid?`<br><button class="copy mini" data-copy="${esc(p.pid)}">${esc(p.pid)} <span class="ci">Copy</span></button>`:""}</td><td>${esc(p.county)}</td><td class="small">${esc(p.channel)}<br><span class="muted">${esc(kind(p))}</span></td><td class="r num">${money(num(p.bid))}</td><td class="r num">${money(k.V)}</td><td class="r num">${k.discPct!=null?Math.round(k.discPct*100)+"%":"—"}</td><td><span class="pill ${tierCls(p.tier)}">${esc(p.tier||"—")}</span></td><td><span class="pill ${k.cls}">${scoreLabel(k)}</span></td><td class="small">${esc(p.status||"Watching")}</td></tr>`}).join("");
+  else if(view==="table")$("#tbody").innerHTML=rows.map(p=>{const k=calc(p);return `<tr class="item" data-id="${esc(p._id)}" tabindex="0"><td class="num">${esc(p.date)}</td><td><b>${esc(p.addr)}</b><br><span class="muted small">${esc(p.city)}</span>${p.pid?`<br><button class="copy mini" data-copy="${esc(p.pid)}">${esc(p.pid)} <span class="ci">Copy</span></button>`:""}</td><td>${esc(p.county)}</td><td class="small">${esc(p.channel)}<br><span class="muted">${esc(kind(p))}</span></td><td class="r num">${money(num(p.bid))}</td><td class="r num">${money(k.V)}</td><td class="r num">${k.discPct!=null?Math.round(k.discPct*100)+"%":"—"}</td><td>${tierBtn(p)}</td><td><span class="pill ${k.cls}">${scoreLabel(k)}</span></td><td class="small">${esc(p.status||"Watching")}</td></tr>`}).join("");
   else renderBigMap(rows);
   if(view==="cards"&&!rows.length)$("#cards").innerHTML="";
   if(view==="table"&&!rows.length)$("#tbody").innerHTML="";
@@ -377,7 +381,7 @@ function renderBigMap(rows){
   setTimeout(()=>bigMap.invalidateSize(),50);
   bigLayer.clearLayers(); const pts=[];
   for(const p of rows){if(!p.lat)continue;const k=calc(p);
-    const m=L.circleMarker([p.lat,p.lng],{radius:8,color:"#fff",weight:2,fillColor:tierColor(p.tier),fillOpacity:.95}).addTo(bigLayer);
+    const m=L.circleMarker([p.lat,p.lng],{radius:8,color:"#fff",weight:2,fillColor:tierColor(tierOf(p)),fillOpacity:.95}).addTo(bigLayer);
     const img=(p.photos||[])[0]||streetViewUrl(p,"300x160");
     m.bindPopup(`<div class="pop">${img?`<img src="${esc(img)}" style="width:220px;height:120px;object-fit:cover;border-radius:6px" referrerpolicy="no-referrer" onerror="this.remove()">`:""}<b>${esc(p.addr)}</b>${esc(p.city)}<br>${money(num(p.bid))} bid · value ${moneyK(k.V)}<br>${esc(p.channel)} · ${esc(p.date||"")}<br><button class="link" data-open-id="${esc(p._id)}">Open property</button></div>`);
     pts.push([p.lat,p.lng])}
@@ -387,13 +391,13 @@ function renderBigMap(rows){
   if(missing.length&&!geoBusy)geocodeMissing(missing,()=>{});
 }
 function renderForYou(pool,searching){
-  const liked=props.filter(p=>/Ready to bid|Bid - won|Researching/.test(p.status||"")), passed=props.filter(p=>p.status==="Passed");
-  const up=(pool||props).filter(p=>isUpcoming(p)&&!/Passed|Bid/.test(p.status||""));
+  const liked=props.filter(p=>/Ready to bid|Bid - won|Researching/.test(p.status||"")||tierOf(p)==="EXCELLENT"), passed=props.filter(p=>p.status==="Passed"||/RED|SET ASIDE/.test(tierOf(p)));
+  const up=(pool||props).filter(p=>isUpcoming(p)&&!/Passed|Bid/.test(p.status||"")&&!/RED|SET ASIDE/.test(tierOf(p)));
   if(searching||!up.length){$("#forYouSec").hidden=true;return}
   let why, ranked;
   if(liked.length){
     ranked=up.filter(p=>!liked.includes(p)).map(x=>{const k=calc(x);return{x,s:Math.max(...liked.map(l=>similarity(l,x)))-0.6*Math.max(0,...passed.map(l=>similarity(l,x)))+(k.ai?k.score:k.pre)/15}}).sort((a,b)=>b.s-a.s).slice(0,8).map(o=>o.x);
-    why=`Based on the ${liked.length} propert${liked.length===1?"y":"ies"} you marked Researching or Ready to bid.`;
+    why=`Based on the ${liked.length} propert${liked.length===1?"y":"ies"} you tagged EXCELLENT or marked Researching / Ready to bid.`;
   }else{
     ranked=up.map(x=>{const k=calc(x);return{x,s:(k.ai?k.score:k.pre)+(k.discPct||0)*20}}).sort((a,b)=>b.s-a.s).slice(0,8).map(o=>o.x);
     why="Best numbers on the list right now. Mark properties Researching or Ready to bid and this row learns what you like.";
@@ -407,7 +411,7 @@ function suggest(){
   const q=$("#q").value.trim().toLowerCase(), box=$("#sugg");
   if(q.length<2){box.hidden=true;return}
   const hits=props.filter(p=>[p.addr,p.city,p.case,p.plaintiff,p.owner,p.pid].join(" ").toLowerCase().includes(q)).slice(0,8);
-  let html=hits.map(p=>`<button data-open-id="${esc(p._id)}"><span class="pill ${tierCls(p.tier)}" style="font-size:10.5px">${esc(p.tier||"NEW")}</span><span class="addr"><b>${esc(p.addr)}</b> <span class="muted">${esc(p.city)}</span></span><span class="num small">${money(num(p.bid))}</span></button>`).join("");
+  let html=hits.map(p=>`<button data-open-id="${esc(p._id)}"><span class="pill ${tierCls(tierOf(p))}" style="font-size:10.5px">${esc(tierOf(p)||"NEW")}</span><span class="addr"><b>${esc(p.addr)}</b> <span class="muted">${esc(p.city)}</span></span><span class="num small">${money(num(p.bid))}</span></button>`).join("");
   if(!hits.length){const prof=queryProfile(q);const sim=props.filter(isUpcoming).map(x=>({x,s:similarity(prof,x)})).sort((a,b)=>b.s-a.s).slice(0,4).filter(o=>o.s>=2);
     html=`<div class="hint">Not on your list yet. Press <b>+ Add</b> to add it. Similar properties:</div>`+sim.map(o=>`<button data-open-id="${esc(o.x._id)}"><span class="tag">similar</span><span class="addr"><b>${esc(o.x.addr)}</b> <span class="muted">${esc(o.x.city)}</span></span><span class="num small">${money(num(o.x.bid))}</span></button>`).join("")}
   box.innerHTML=html; box.hidden=false; sugIdx=-1;
@@ -450,7 +454,7 @@ function renderDetail(fresh){
   el.innerHTML=`
   <div class="panel">
    <div class="dhead">
-     <div style="min-width:0"><div class="row" style="gap:8px"><span class="pill ${tierCls(p.tier)}">${esc(p.tier||"NEW")}</span><span class="small muted">${esc(p.county)} · ${esc(p.channel)} · ${esc(kind(p))}</span></div>
+     <div style="min-width:0"><div class="row" style="gap:8px">${tierBtn(p)}${p.myTier&&p.tier&&p.myTier!==p.tier?`<span class="small muted">(imported as ${esc(p.tier)})</span>`:""}<span class="small muted">${esc(p.county)} · ${esc(p.channel)} · ${esc(kind(p))}</span></div>
        <h2 style="margin-top:4px;font-size:22px">${esc(p.addr)}</h2><p class="muted">${esc(p.city)} · ${listing?"Listed":"Sale"} ${esc(p.date||"—")} · ${listing?"MLS":"Case"} <span class="num">${esc(p.case||"—")}</span></p>
        <div class="copybar">${copyBtn(p.pid,"Parcel ID")}${copyBtn(pidDashed(p),"With dashes")}${copyBtn(p.case,listing?"MLS #":"Case #")}${copyBtn(p.addr,"Address")}${copyBtn(p.owner,"Owner")}</div>
        ${p.pid?`<p class="small muted">Tip: county search pages find properties by <b>Parcel ID</b> or <b>case number</b>, not by street address. Click a button to copy, then paste with Cmd+V.</p>`:`<p class="small muted">No parcel ID saved yet. Find it on the Property Appraiser site and add it below.</p>`}</div>
@@ -537,9 +541,9 @@ function renderDetail(fresh){
     detMap=L.map("detMap",{scrollWheelZoom:false});
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"&copy; OpenStreetMap"}).addTo(detMap);
     if(p.lat){detMap.setView([p.lat,p.lng],p.geoApprox?14:17);
-      const mk=L.marker([p.lat,p.lng],{draggable:true,icon:L.divIcon({className:"",html:`<div style="width:18px;height:18px;border-radius:50%;background:${tierColor(p.tier)};border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.5)"></div>`,iconSize:[18,18],iconAnchor:[9,9]})}).addTo(detMap);
+      const mk=L.marker([p.lat,p.lng],{draggable:true,icon:L.divIcon({className:"",html:`<div style="width:18px;height:18px;border-radius:50%;background:${tierColor(tierOf(p))};border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.5)"></div>`,iconSize:[18,18],iconAnchor:[9,9]})}).addTo(detMap);
       mk.on("dragend",()=>{const ll=mk.getLatLng();Store.patch(p._id,{lat:ll.lat,lng:ll.lng,geoApprox:false,geoFail:false});toast("Pin moved.")});
-      for(const x of sim)if(x.lat)L.circleMarker([x.lat,x.lng],{radius:6,color:"#fff",weight:1.5,fillColor:tierColor(x.tier),fillOpacity:.85}).bindTooltip(x.addr).addTo(detMap);
+      for(const x of sim)if(x.lat)L.circleMarker([x.lat,x.lng],{radius:6,color:"#fff",weight:1.5,fillColor:tierColor(tierOf(x)),fillOpacity:.85}).bindTooltip(x.addr).addTo(detMap);
     }else{detMap.setView([26.4,-80.15],9);if(!p.geoFail)geocode(p).then(g=>Store.patch(p._id,g?{lat:g.lat,lng:g.lng,geoApprox:!!g.approx}:{geoFail:true}))}
   }
 }
@@ -756,11 +760,26 @@ function openSettings(){
 }
 
 /* ---------- events & boot ---------- */
+function closeTierMenu(){const m=document.getElementById("tierMenu");if(m)m.remove()}
+function openTierMenu(btn){
+  closeTierMenu(); const p=Store.get(btn.dataset.tierId); if(!p)return;
+  const cur=tierOf(p), m=document.createElement("div"); m.id="tierMenu"; m.className="tiermenu"; m.setAttribute("role","menu");
+  m.innerHTML=`<div class="small muted" style="padding:4px 8px">Change tag</div>`+TIERS.map(([t,d])=>`<button data-set-tier="${t}" data-for="${esc(p._id)}" class="${t===cur?"on":""}"><span class="pill ${tierCls(t)}">${t}</span><span class="small">${d}</span></button>`).join("")
+    +(p.myTier&&p.tier?`<button data-set-tier="" data-for="${esc(p._id)}"><span class="small muted">Undo: go back to the imported tag (${esc(p.tier)})</span></button>`:"");
+  document.body.appendChild(m);
+  const r=btn.getBoundingClientRect(), w=m.offsetWidth, h=m.offsetHeight;
+  m.style.left=(window.scrollX+Math.max(8,Math.min(window.innerWidth-w-8,r.left)))+"px";
+  m.style.top=(window.scrollY+(r.bottom+h+8<window.innerHeight?r.bottom+4:Math.max(8,r.top-h-4)))+"px";
+}
 async function copyText(t){
   try{await navigator.clipboard.writeText(t);toast("Copied: "+t)}
   catch{const ta=document.createElement("textarea");ta.value=t;document.body.appendChild(ta);ta.select();try{document.execCommand("copy");toast("Copied: "+t)}catch{toast("Select and copy: "+t)}ta.remove()}
 }
 document.addEventListener("click",e=>{
+  const tm=e.target.closest("[data-set-tier]");if(tm){e.stopPropagation();const id=tm.dataset.for,v=tm.dataset.setTier;closeTierMenu();Store.patch(id,{myTier:v||null});toast(v?`Tagged ${v}.`:"Back to the imported tag.");return}
+  const tb=e.target.closest("[data-tier-id]");if(tb){e.preventDefault();e.stopPropagation();openTierMenu(tb);return}
+  if(!e.target.closest("#tierMenu"))closeTierMenu();
+  if(e.target.closest("[data-show-aside]")){$("#fTier").value="SET ASIDE";renderList();return}
   if(e.target.closest("[data-clear]")){clearFilters();return}
   const cp=e.target.closest("[data-copy]");if(cp){e.preventDefault();e.stopPropagation();copyText(cp.dataset.copy);return}
   const o=e.target.closest("[data-open-id]");if(o){openDetail(o.dataset.openId);return}

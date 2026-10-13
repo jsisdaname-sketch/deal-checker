@@ -17,6 +17,7 @@ const dkey=d=>{const m=String(d||"").match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);retu
 const T0=new Date();T0.setHours(0,0,0,0);
 const today=""+T0.getFullYear()+String(T0.getMonth()+1).padStart(2,"0")+String(T0.getDate()).padStart(2,"0");
 const daysTo=d=>{const m=String(d||"").match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);if(!m)return null;return Math.round((new Date(+m[3],+m[1]-1,+m[2])-T0)/864e5)};
+const daysSince=d=>Math.round((T0-new Date(d+"T00:00:00"))/864e5);
 const isUpcoming=p=>!p.date||dkey(p.date)>=today;
 function toast(t){const el=$("#toast");el.textContent=t;el.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>el.hidden=true,3000)}
 const zip=p=>(String(p.city||"").match(/\b(\d{5})\b/)||[])[1]||"";
@@ -62,7 +63,7 @@ const Store={
   subscribe(){
     let t;this.sb.channel("props").on("postgres_changes",{event:"*",schema:"public",table:"properties"},()=>{clearTimeout(t);t=setTimeout(async()=>{await this.load();this.emit()},400)}).subscribe();
   },
-  all(){return Object.entries(this.cache).map(([id,d])=>({...d,_id:id}))},
+  all(){return Object.entries(this.cache).filter(([id,d])=>!d.hidden).map(([id,d])=>({...d,_id:id}))},
   get(id){return this.cache[id]?{...this.cache[id],_id:id}:null},
   async put(id,data){
     const clean={...data};delete clean._id;
@@ -322,13 +323,13 @@ function card(p,extraTag){
    <div class="cbody">
      <div class="price"><b>${money(num(p.bid))}</b><span class="vs">${listing?"asking":"opening bid"}<br>value ${moneyK(k.V)}</span></div>
      <div class="caddr">${esc(p.addr)}</div><div class="ccity">${esc(p.city)}${p.county?" · "+esc(p.county):""}</div>${p.pid?`<div class="cpid">Parcel <button class="copy mini" data-copy="${esc(p.pid)}" title="Copy parcel ID">${esc(p.pid)} <span class="ci">Copy</span></button></div>`:""}
-     <div class="tags">${tags}</div>
+     <div class="tags">${p.feedGone?`<span class="tag bad">Not on auction list anymore</span>`:""}${sinceVisit(p).added?`<span class="tag good">NEW since your last visit</span>`:sinceVisit(p).changed?`<span class="tag">Updated</span>`:""}${tags}</div>
      <div class="cfoot">${disc}<span class="pill ${k.cls}">${scoreLabel(k)}</span></div>
    </div></article>`;
 }
 function filtered(){
   const q=$("#q").value.trim().toLowerCase(), c=$("#fCounty").value, ch=$("#fChannel").value, t=$("#fTier").value, s=$("#fStatus").value, past=$("#fPast").checked, sort=$("#fSort").value;
-  const rows=props.filter(p=>(past||isUpcoming(p))&&(!c||p.county===c)&&(!ch||p.channel===ch)&&(t?tierOf(p)===t:tierOf(p)!=="SET ASIDE")&&(!s||(p.status||"Watching")===s)
+  const rows=props.filter(p=>(!newOnly||(()=>{const s=sinceVisit(p);return s.added||s.changed||s.gone})())&&(newOnly||past||isUpcoming(p))&&(!c||p.county===c)&&(!ch||p.channel===ch)&&(t?tierOf(p)===t:tierOf(p)!=="SET ASIDE")&&(!s||(p.status||"Watching")===s)
     &&(!q||[p.addr,p.city,p.case,p.plaintiff,p.owner,p.type,p.zoning,p.pid].join(" ").toLowerCase().includes(q)));
   const K=new Map(rows.map(p=>[p._id,calc(p)])); const sc=id=>{const k=K.get(id);return k.ai?k.score:k.pre};
   const by={date:(a,b)=>dkey(a.date).localeCompare(dkey(b.date))||String(a.addr).localeCompare(String(b.addr)),
@@ -347,15 +348,15 @@ function renderModeBar(){
 }
 const FILTERS=[["#fCounty","county"],["#fChannel","sale type"],["#fTier","tier"],["#fStatus","status"]];
 function activeFilters(){return FILTERS.filter(([id])=>$(id).value).map(([id,n])=>`${n}: ${$(id).value}`)}
-function clearFilters(){FILTERS.forEach(([id])=>{$(id).value=""});$("#q").value="";if(bigMap)bigMap._fitted=false;renderList()}
+function clearFilters(){newOnly=false;renderBotBar();FILTERS.forEach(([id])=>{$(id).value=""});$("#q").value="";if(bigMap)bigMap._fitted=false;renderList()}
 function renderList(){
   renderModeBar();
   const rows=filtered(), q=$("#q").value.trim(), act=activeFilters();
-  $("#clearF").hidden=!act.length&&!q;
+  $("#clearF").hidden=!act.length&&!q&&!newOnly;
   const em=$("#emptyMsg");
   if(props.length&&!rows.length&&!q){em.hidden=false;em.innerHTML=`No properties match <b>${esc(act.join(" · "))}</b>${$("#fPast").checked?"":" (upcoming sales only)"}. Your list has ${props.length} properties in total, so try removing one filter. <button class="primary" data-clear="1" style="margin-left:8px">Clear filters</button>`}
   else em.hidden=true;
-  $("#listTitle").textContent=q?`Results for “${q}”`:$("#fPast").checked?"All properties":"Upcoming sales";
+  $("#listTitle").textContent=newOnly?"What changed since your last visit":q?`Results for “${q}”`:$("#fPast").checked?"All properties":"Upcoming sales";
   const nAside=props.filter(p=>tierOf(p)==="SET ASIDE").length;
   $("#listMsg").innerHTML=props.length?`${rows.length} of ${props.length} properties${nAside&&$("#fTier").value!=="SET ASIDE"?` · ${nAside} set aside <button class="link" data-show-aside="1">show</button>`:""}`:"";
   const up=(act.length||q?rows:props).filter(p=>dkey(p.date)>=today), sfx=act.length||q?" (filtered)":"";
@@ -428,6 +429,7 @@ function snapshot(p,k){
   if(p.units)items.push([`${p.units} units`,""]); if(p.year)items.push([`Built ${p.year}`,""]);
   if(dense(p))items.push([`Higher-density zoning (${p.zoning})`,"good"]);
   if(d!=null)items.push([d<0?"Date has passed":`${d} day${d===1?"":"s"} away`,d>=0&&d<=3?"bad":""]);
+  if(p.feedGone)items.push(["No longer on the auction list: canceled, redeemed or sold early?","bad"]);
   if(/HOA/.test(p.channel||""))items.push(["HOA sale: a first mortgage may survive","bad"]);
   if(/\bEST\b|estate/i.test((p.owner||"")+" "+(p.notes||"")))items.push(["Owner is an estate: confirm heirs were named",""]);
   return items;
@@ -750,10 +752,8 @@ function openSettings(){
   $("#s_exp").onclick=()=>{const blob=new Blob([JSON.stringify({version:1,exported:new Date().toISOString(),properties:Store.all().map(p=>({...p,id:p._id,_id:undefined}))},null,1)],{type:"application/json"});
     const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="deal-checker-export.json";a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000)};
   $("#s_imp").onchange=async e=>{const f=e.target.files[0];if(!f)return;
-    try{const j=JSON.parse(await f.text());const arr=Array.isArray(j)?j:j.properties||[];let n=0,skip=0;
-      for(const p of arr){const id=safeId(p.id||p._id||p.case)||newId();if(Store.get(id)){skip++;continue}const d={...p};delete d.id;delete d._id;
-        if(Store.mode==="shared")await Store.sb.from("properties").upsert({id,data:d});Store.cache[id]=d;n++}
-      if(Store.mode!=="shared")LS.set("dc_props",Store.cache);Store.emit();$("#s_msg").textContent=`Imported ${n} properties${skip?`, skipped ${skip} already on the list`:""}.`}
+    try{const j=JSON.parse(await f.text());const arr=Array.isArray(j)?j:j.properties||[];
+      const res=await mergeFeed(arr);$("#s_msg").textContent=`Imported: ${res.added} new, ${res.changed} updated. Your tags, notes, comps and checklists were kept.`}
     catch(err){$("#s_msg").textContent="That file could not be read: "+err.message}};
   const push=$("#s_push");if(push)push.onclick=async()=>{const loc=LS.get("dc_props",{});let n=0;for(const [id,d] of Object.entries(loc)){if(Store.get(id))continue;await Store.sb.from("properties").upsert({id,data:d});Store.cache[id]=d;n++}Store.emit();$("#s_msg").textContent=`Copied ${n} properties.`};
   el.scrollIntoView({behavior:"smooth",block:"start"});
@@ -802,14 +802,77 @@ $("#q").addEventListener("keydown",e=>{const items=[...$("#sugg").querySelectorA
   items.forEach((b,i)=>b.classList.toggle("on",i===sugIdx))});
 
 Store.onChange(()=>{
+  renderBotBar();
   props=Store.all(); CITIES=[...new Set(props.map(cityName).filter(Boolean))];
   renderList();
   const ae=document.activeElement, typing=ae&&$("#detail").contains(ae)&&/TEXTAREA|INPUT/.test(ae.tagName)&&ae.type!=="checkbox"&&ae.type!=="file";
   if(selId&&!typing&&!aiRunning)renderDetail();
 });
+/* ---------- bot status + "since your last visit" ---------- */
+let feedMeta=null, newOnly=false;
+const LAST_VISIT=LS.get("dc_last_visit",null); // ISO time of the previous visit (read once per page load)
+const sinceVisit=p=>{const t=LAST_VISIT||"1970";return{added:p.feedAddedAt&&p.feedAddedAt>t,changed:p.feedChangedAt&&p.feedChangedAt>t&&!(p.feedAddedAt&&p.feedAddedAt>t),gone:p.feedGoneAt&&p.feedGoneAt>t}};
+function markVisited(){LS.set("dc_last_visit",new Date().toISOString())}
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="hidden")markVisited()});
+window.addEventListener("pagehide",markVisited);
+const fmtWhen=iso=>{const d=new Date(iso);if(isNaN(d))return iso;return d.toLocaleString("en-US",{weekday:"short",month:"short",day:"numeric",hour:"numeric",minute:"2-digit"})};
+function renderBotBar(){
+  const el=$("#botBar"); if(!el)return;
+  let state,cls,line;
+  if(!feedMeta||feedMeta.error){state="Waiting for the first morning run";cls="p-grey";line="The bot publishes the daily list here each morning at about 6:52 AM. Nothing has been published yet."}
+  else{
+    const ageH=(Date.now()-new Date(feedMeta.stamp))/36e5;
+    if(ageH<=26){state="Bot ran "+(new Date(feedMeta.stamp).toDateString()===new Date().toDateString()?"today":"yesterday");cls="p-go"}
+    else if(ageH<=72){state="Bot missed a run";cls="p-warn"}
+    else{state="Bot hasn't run in "+Math.floor(ageH/24)+" days";cls="p-bad"}
+    line=`Last update ${fmtWhen(feedMeta.stamp)} · ${feedMeta.total} on the list${feedMeta.scanned?` · ${feedMeta.scanned} auctions scanned`:""}${feedMeta.counties.length?` · ${feedMeta.counties.join(", ")}`:""}`;
+    if(cls!=="p-go")line+=". Check that your computer was on with the Claude app open at 6:52 AM and that GitHub is connected.";
+  }
+  const all=Store.all(); let a=0,c=0,g=0; for(const p of all){const s=sinceVisit(p);if(s.added)a++;if(s.changed)c++;if(s.gone)g++}
+  const since=LAST_VISIT?`since your last visit (${fmtWhen(LAST_VISIT)})`:"since you started";
+  el.innerHTML=`<div class="botrow"><span class="pill ${cls}"><span class="dot"></span>${esc(state)}</span><span class="small muted">${esc(line)}</span></div>
+   <div class="botrow"><b>${a?`${a} new`:"No new listings"}</b><span class="small muted">${c?` · ${c} updated`:""}${g?` · ${g} no longer listed`:""} ${esc(since)}</span>
+   ${a||c||g?`<button class="${newOnly?"primary":""}" id="newOnlyBtn">${newOnly?"Showing what changed. Show all":"Show what changed"}</button>`:""}
+   <button class="ghost small" id="seenBtn" title="Reset the counter now">Mark all as seen</button></div>`;
+  const nb=$("#newOnlyBtn");if(nb)nb.onclick=()=>{newOnly=!newOnly;renderList();renderBotBar();$("#listTitle").scrollIntoView({behavior:"smooth",block:"start"})};
+  $("#seenBtn").onclick=()=>{markVisited();location.reload()};
+}
+
+/* ---------- daily watchlist feed (data/watchlist.json, published by the scheduled task) ---------- */
+const FEED_FIELDS=["county","channel","date","case","addr","city","pid","type","plaintiff","ptype","bid","value","land","bldg","zoning","fit","vacant","notes","link","tier","source","feedStatus","owner"];
+async function mergeFeed(items,{markGone=false,feedDate="",scanned=null}={}){
+  let added=0,changed=0,gone=0; const seen=new Set((scanned||[]).map(safeId));
+  for(const raw of items){
+    const id=safeId(raw.id||raw._id||raw.case); if(!id)continue; seen.add(id);
+    const cur=Store.get(id);
+    if(!cur){const d={};for(const k of FEED_FIELDS)if(raw[k]!=null&&raw[k]!=="")d[k]=raw[k];d.status="Watching";d.feedFirstSeen=feedDate||new Date().toISOString().slice(0,10);d.feedAddedAt=new Date().toISOString();
+      await Store.put(id,d);added++;continue}
+    const patch={};for(const k of FEED_FIELDS){if(raw[k]==null||raw[k]==="")continue;if(JSON.stringify(cur[k])!==JSON.stringify(raw[k]))patch[k]=raw[k]}
+    if(cur.feedGone)patch.feedGone=false;
+    if(["bid","date","value","tier","plaintiff","ptype","addr","channel","feedGone"].some(k=>k in patch))patch.feedChangedAt=new Date().toISOString();
+    if(Object.keys(patch).length){if(patch.addr&&patch.addr!==cur.addr){patch.lat=null;patch.lng=null;patch.geoFail=false}await Store.patch(id,patch);changed++}
+  }
+  if(markGone){for(const p of Store.all()){if(!seen.has(p._id)&&/^Watchlist|^Daily/.test(p.source||"")&&isUpcoming(p)&&!p.feedGone){await Store.patch(p._id,{feedGone:true,feedGoneAt:new Date().toISOString()});gone++}}}
+  return{added,changed,gone};
+}
+async function loadFeed(){
+  try{
+    const r=await fetch("data/watchlist.json?t="+Date.now(),{cache:"no-store"}); if(!r.ok)return;
+    const j=await r.json(); const stamp=j.generated||""; if(!stamp||!Array.isArray(j.properties))return;
+    feedMeta={stamp,counties:j.counties||[],window:j.window||"",total:j.properties.length,scanned:(j.scanned||[]).length};
+    if(Store.mode==="login")return;
+    const last=Store.mode==="shared"?(Store.cache.__feed?.stamp||""):LS.get("dc_feed_stamp","");
+    if(last===stamp)return;
+    const res=await mergeFeed(j.properties,{markGone:true,feedDate:stamp.slice(0,10),scanned:Array.isArray(j.scanned)?j.scanned:null});
+    if(Store.mode==="shared"){await Store.put("__feed",{stamp,hidden:true})}else LS.set("dc_feed_stamp",stamp);
+    if(res.added||res.changed||res.gone)toast(`Watchlist updated ${stamp.slice(0,10)}: ${res.added} new, ${res.changed} changed${res.gone?`, ${res.gone} no longer listed`:""}.`);
+  }catch(e){console.warn("feed",e);feedMeta=feedMeta||{error:true}}
+  finally{renderBotBar()}
+}
 (async()=>{
   await Store.init();
   props=Store.all(); CITIES=[...new Set(props.map(cityName).filter(Boolean))];
   const v=LS.get("dc_view","cards"); setView(["cards","map","table"].includes(v)?v:"cards");
+  await loadFeed();
   if(!S.anthropicKey&&!props.length)openSettings();
 })();

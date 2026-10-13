@@ -24,6 +24,7 @@ const cityName=p=>String(p.city||"").replace(/\s*\d{5}.*$/,"").trim();
 const fullAddr=p=>`${String(p.addr||"").replace(/\s*(#|UNIT|APT|STE)\s*\S+$/i,"")}, ${cityName(p)}, FL ${zip(p)}`.replace(/\s+,/g,",");
 function kind(p){const t=(String(p.type||"")+" "+String(p.notes||"")).toUpperCase();
   if(p.vacant||/VACANT|\bLAND\b|\bLOT\b/.test(t))return"Vacant land";
+  if(/MOBILE|MANUFACT/.test(t))return"Mobile home";
   if(/CONDO/.test(t))return"Condo";if(/TOWN/.test(t))return"Townhome";if(/DUPLEX|TRIPLEX|QUAD|MULTI|APART/.test(t))return"Multi-family";
   if(/COMM|OFFICE|STORE|RETAIL|WAREHOUSE|MIXED|CHURCH/.test(t))return"Commercial";return"Single family"}
 const dense=p=>/RM|RH|MF|RMH|R-3|R-4|T5|T4|T6|MU|C-|CG|CC|CB|YC|RD|DT|MXD/.test(String(p.zoning||"").toUpperCase());
@@ -341,16 +342,23 @@ function renderModeBar(){
     :`<span class="pill p-warn">This browser only</span> <button class="link" data-open="settings">connect Supabase to share with your partner</button>`;
   el.innerHTML=`${st} ${ai} ${ph}`;
 }
+const FILTERS=[["#fCounty","county"],["#fChannel","sale type"],["#fTier","tier"],["#fStatus","status"]];
+function activeFilters(){return FILTERS.filter(([id])=>$(id).value).map(([id,n])=>`${n}: ${$(id).value}`)}
+function clearFilters(){FILTERS.forEach(([id])=>{$(id).value=""});$("#q").value="";if(bigMap)bigMap._fitted=false;renderList()}
 function renderList(){
   renderModeBar();
-  const rows=filtered(), q=$("#q").value.trim();
+  const rows=filtered(), q=$("#q").value.trim(), act=activeFilters();
+  $("#clearF").hidden=!act.length&&!q;
+  const em=$("#emptyMsg");
+  if(props.length&&!rows.length&&!q){em.hidden=false;em.innerHTML=`No properties match <b>${esc(act.join(" · "))}</b>${$("#fPast").checked?"":" (upcoming sales only)"}. Your list has ${props.length} properties in total, so try removing one filter. <button class="primary" data-clear="1" style="margin-left:8px">Clear filters</button>`}
+  else em.hidden=true;
   $("#listTitle").textContent=q?`Results for “${q}”`:$("#fPast").checked?"All properties":"Upcoming sales";
   $("#listMsg").textContent=props.length?`${rows.length} of ${props.length} properties`:"";
-  const up=props.filter(p=>dkey(p.date)>=today);
-  $("#strip").innerHTML=props.length?[[up.length,"upcoming sales"],[up.filter(p=>{const d=daysTo(p.date);return d!=null&&d<=7}).length,"selling in the next 7 days"],[up.filter(p=>p.tier==="GREEN").length,"GREEN on the watchlist"],[props.filter(p=>p.ai&&p.ai.result).length,"title-checked by AI"],[props.filter(p=>p.status==="Ready to bid").length,"marked Ready to bid"]].map(([n,l])=>`<div class="stat"><b>${n}</b><span>${l}</span></div>`).join(""):"";
+  const up=(act.length||q?rows:props).filter(p=>dkey(p.date)>=today), sfx=act.length||q?" (filtered)":"";
+  $("#strip").innerHTML=props.length?[[up.length,"upcoming sales"+sfx],[up.filter(p=>{const d=daysTo(p.date);return d!=null&&d<=7}).length,"selling in the next 7 days"],[up.filter(p=>p.tier==="GREEN").length,"GREEN"+sfx],[up.filter(p=>p.ai&&p.ai.result).length,"title-checked by AI"],[up.filter(p=>p.status==="Ready to bid").length,"marked Ready to bid"]].map(([n,l])=>`<div class="stat"><b>${n}</b><span>${l}</span></div>`).join(""):"";
   if(!props.length){
     $("#cards").innerHTML=`<div class="empty" style="grid-column:1/-1">${Store.mode==="login"?"Sign in (Settings) to see your shared list.":"No properties yet. Press <b>+ Add</b>, or open <b>Settings → Import</b> and load your watchlist file."}</div>`;
-    $("#tbody").innerHTML="";renderForYou();return}
+    $("#tbody").innerHTML="";renderForYou([]);return}
   if(!rows.length&&q){
     const prof=queryProfile(q); const sim=props.filter(isUpcoming).map(x=>({x,s:similarity(prof,x)})).sort((a,b)=>b.s-a.s).slice(0,6).filter(o=>o.s>=2).map(o=>o.x);
     $("#cards").innerHTML=`<div class="empty" style="grid-column:1/-1">No property on your list matches “${esc(q)}”. <button id="addFromQ" class="primary" style="margin-left:8px">Add it</button>${sim.length?`<p class="small" style="margin-top:14px">Properties on your list most like what you typed:</p>`:""}</div>`+sim.map(p=>card(p,"Similar to your search")).join("");
@@ -359,7 +367,9 @@ function renderList(){
   if(view==="cards")$("#cards").innerHTML=rows.map(p=>card(p)).join("");
   else if(view==="table")$("#tbody").innerHTML=rows.map(p=>{const k=calc(p);return `<tr class="item" data-id="${esc(p._id)}" tabindex="0"><td class="num">${esc(p.date)}</td><td><b>${esc(p.addr)}</b><br><span class="muted small">${esc(p.city)}</span>${p.pid?`<br><button class="copy mini" data-copy="${esc(p.pid)}">${esc(p.pid)} <span class="ci">Copy</span></button>`:""}</td><td>${esc(p.county)}</td><td class="small">${esc(p.channel)}<br><span class="muted">${esc(kind(p))}</span></td><td class="r num">${money(num(p.bid))}</td><td class="r num">${money(k.V)}</td><td class="r num">${k.discPct!=null?Math.round(k.discPct*100)+"%":"—"}</td><td><span class="pill ${tierCls(p.tier)}">${esc(p.tier||"—")}</span></td><td><span class="pill ${k.cls}">${scoreLabel(k)}</span></td><td class="small">${esc(p.status||"Watching")}</td></tr>`}).join("");
   else renderBigMap(rows);
-  renderForYou();
+  if(view==="cards"&&!rows.length)$("#cards").innerHTML="";
+  if(view==="table"&&!rows.length)$("#tbody").innerHTML="";
+  renderForYou(rows,!!q);
 }
 function renderBigMap(rows){
   if(!window.L){$("#mapMsg").textContent="The map library did not load. Check your connection.";return}
@@ -376,10 +386,10 @@ function renderBigMap(rows){
   $("#mapMsg").textContent=missing.length?`Finding map pins for ${missing.length} more properties (about 1 per second)…`:`${pts.length} properties on the map.${rows.some(p=>p.geoFail)?" Some addresses could not be found; open the property and set the pin with a Google Maps link.":""}`;
   if(missing.length&&!geoBusy)geocodeMissing(missing,()=>{});
 }
-function renderForYou(){
+function renderForYou(pool,searching){
   const liked=props.filter(p=>/Ready to bid|Bid - won|Researching/.test(p.status||"")), passed=props.filter(p=>p.status==="Passed");
-  const up=props.filter(p=>isUpcoming(p)&&!/Passed|Bid/.test(p.status||""));
-  if(!up.length){$("#forYouSec").hidden=true;return}
+  const up=(pool||props).filter(p=>isUpcoming(p)&&!/Passed|Bid/.test(p.status||""));
+  if(searching||!up.length){$("#forYouSec").hidden=true;return}
   let why, ranked;
   if(liked.length){
     ranked=up.filter(p=>!liked.includes(p)).map(x=>{const k=calc(x);return{x,s:Math.max(...liked.map(l=>similarity(l,x)))-0.6*Math.max(0,...passed.map(l=>similarity(l,x)))+(k.ai?k.score:k.pre)/15}}).sort((a,b)=>b.s-a.s).slice(0,8).map(o=>o.x);
@@ -751,6 +761,7 @@ async function copyText(t){
   catch{const ta=document.createElement("textarea");ta.value=t;document.body.appendChild(ta);ta.select();try{document.execCommand("copy");toast("Copied: "+t)}catch{toast("Select and copy: "+t)}ta.remove()}
 }
 document.addEventListener("click",e=>{
+  if(e.target.closest("[data-clear]")){clearFilters();return}
   const cp=e.target.closest("[data-copy]");if(cp){e.preventDefault();e.stopPropagation();copyText(cp.dataset.copy);return}
   const o=e.target.closest("[data-open-id]");if(o){openDetail(o.dataset.openId);return}
   const s=e.target.closest("[data-open]");if(s&&s.dataset.open==="settings"){openSettings();return}

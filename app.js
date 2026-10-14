@@ -229,11 +229,45 @@ async function fileToImage(f){
   const data=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(",")[1]);r.onerror=rej;r.readAsDataURL(f)});
   return{type:f.type,data};
 }
+// Repairs the usual AI JSON slips: code fences, text around the JSON, raw line breaks inside
+// strings, trailing commas, and an answer that was cut off before the closing brackets.
+function repairJSON(t){
+  t=String(t||"").replace(/```(?:json)?/gi,"");
+  const a=t.indexOf("{"); if(a<0)return null; t=t.slice(a);
+  let out="", stack=[], inStr=false, esc=false, end=-1;
+  for(let i=0;i<t.length;i++){const c=t[i];
+    if(inStr){
+      if(esc){out+=c;esc=false;continue}
+      if(c==="\\"){out+=c;esc=true;continue}
+      if(c==='"'){out+=c;inStr=false;continue}
+      if(c==="\n"){out+="\\n";continue} if(c==="\r"){continue} if(c==="\t"){out+="\\t";continue}
+      out+=c;continue}
+    if(c==='"'){inStr=true;out+=c;continue}
+    if(c==="{"||c==="["){stack.push(c==="{"?"}":"]");out+=c;continue}
+    if(c==="}"||c==="]"){stack.pop();out+=c;if(!stack.length){end=out.length;break}continue}
+    out+=c}
+  if(end<0){ // cut off: close what is open
+    if(inStr)out+='"';
+    out=out.replace(/,\s*$/,"").replace(/,\s*"[^"]*"\s*:?\s*$/,"").replace(/:\s*$/,': null');
+    while(stack.length)out+=stack.pop();
+  }
+  out=out.replace(/,(\s*[}\]])/g,"$1");
+  try{return JSON.parse(out)}catch{return null}
+}
 function parseJSON(t){
   try{return JSON.parse(t)}catch{}
   const f=t.match(/```(?:json)?\s*([\s\S]*?)```/);if(f){try{return JSON.parse(f[1])}catch{}}
   const a=t.indexOf("{"),b=t.lastIndexOf("}");if(a>=0&&b>a){try{return JSON.parse(t.slice(a,b+1))}catch{}}
+  const r=repairJSON(t); if(r&&typeof r==="object")return r;
   throw new Error("The AI answer was not readable. Press the button again.");
+}
+// Last resort: a quick, cheap pass that rewrites a messy answer as clean JSON.
+async function parseOrFix(text,pr){
+  try{return parseJSON(text)}catch{}
+  pr&&pr.stage&&pr.stage("Tidying the answer…");
+  const fixed=await askClaude({model:"claude-haiku-5-5",maxTokens:16000,system:"You convert text into one valid JSON object. Keep every field and every word of content. Output only the JSON, nothing else.",
+    messages:[{role:"user",content:"Turn this into one valid JSON object:\n\n"+text.slice(0,60000)}]});
+  return parseJSON(fixed);
 }
 // onText(chars) is called as the answer streams in, so the page can show real progress.
 async function askClaude({system,messages,model,maxTokens=4096,onText}){
@@ -248,7 +282,9 @@ async function askClaude({system,messages,model,maxTokens=4096,onText}){
       const line=ev.split("\n").find(l=>l.startsWith("data:")); if(!line)continue;
       let d; try{d=JSON.parse(line.slice(5))}catch{continue}
       if(d.type==="content_block_delta"&&d.delta&&d.delta.type==="text_delta"){out+=d.delta.text; onText&&onText(out.length)}
+      else if(d.type==="message_delta"&&d.delta&&d.delta.stop_reason)askClaude.stop=d.delta.stop_reason;
       else if(d.type==="error")throw new Error("AI error: "+(d.error&&d.error.message||"stream failed"));}}
+  if(!out.trim())throw new Error("The AI sent back an empty answer. Press the button again.");
   return out;
 }
 // Spinner with a percent. Progress = how much of a typical answer has been written (honest estimate), never 100% until done.
@@ -263,10 +299,11 @@ function progressRing(el,{label,expect}){
     const write=chars?18+76*(1-Math.exp(-chars/expect)):0;
     pct=Math.max(pct,Math.min(97,Math.round(Math.max(warm,write))));
     fg.setAttribute("stroke-dasharray",pct+" 100"); pp.textContent=pct+"%";
+    if(stage===null)return;
     pl.textContent=chars?"Writing the "+stage+"…":"Reading the property file…";
   };
   const timer=setInterval(draw,250); draw();
-  return{text(n){chars=n},
+  return{text(n){chars=n},stage(m){stage=null;pl.textContent=m;pp.textContent=pct+"%"},
     done(msg){dead=true;clearInterval(timer);if(!el.isConnected)return;fg.setAttribute("stroke-dasharray","100 100");pp.textContent="100%";pl.textContent=msg||"Done.";},
     fail(msg){dead=true;clearInterval(timer);if(el.isConnected)el.innerHTML=`<span class="small" style="color:var(--bad)">${esc(msg)}</span>`;}};
 }
@@ -654,9 +691,9 @@ async function runTitle(p){
   const pr=progressRing($("#aiStatus"),{label:"title opinion",expect:3500});
   try{
     const imgs=[];for(const f of files.slice(0,8))imgs.push(await fileToImage(f));
-    const text=await askClaude({system:ATTORNEY,model:S.titleModel,maxTokens:6000,onText:n=>pr.text(n),messages:[userMsg(titlePrompt(p,records.slice(0,80000),fj.slice(0,40000)),imgs)]});
-    pr.done("Title opinion ready.");
-    const res=parseJSON(text); res.titleRisk=Math.max(0,Math.min(100,num(res.titleRisk)??100));
+    const text=await askClaude({system:ATTORNEY,model:S.titleModel,maxTokens:16000,onText:n=>pr.text(n),messages:[userMsg(titlePrompt(p,records.slice(0,80000),fj.slice(0,40000)),imgs)]});
+    const res=await parseOrFix(text,pr);
+    pr.done("Title opinion ready."); res.titleRisk=Math.max(0,Math.min(100,num(res.titleRisk)??100));
     aiRunning=false;
     await Store.patch(p._id,{records:records.slice(0,80000),fj:fj.slice(0,40000),ai:{result:res,at:new Date().toISOString()}});
     toast("Title examination done.");
@@ -670,7 +707,7 @@ async function runIns(p){
   const pr=progressRing($("#insStatus"),{label:"analysis",expect:1800});
   try{
     const imgs=[];for(const u of (p.photos||[]).slice(0,3)){const im=await urlToImage(u);if(im)imgs.push(im)}
-    const res=parseJSON(await askClaude({system:INSIGHTS,messages:[userMsg(insPrompt(p),imgs)],maxTokens:3000,onText:n=>pr.text(n)}));
+    const res=await parseOrFix(await askClaude({system:INSIGHTS,messages:[userMsg(insPrompt(p),imgs)],maxTokens:8000,onText:n=>pr.text(n)}),pr);
     pr.done("Analysis ready.");
     aiRunning=false; await Store.patch(p._id,{insights:{result:res,at:new Date().toISOString()}}); toast("Analysis done.");
   }catch(e){aiRunning=false;pr.fail(e.message)}finally{aiRunning=false;const b=$("#runIns");if(b)b.disabled=false}

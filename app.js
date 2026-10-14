@@ -836,7 +836,7 @@ function renderBotBar(){
     else if(ageH<=72){state="Bot missed a run";cls="p-warn"}
     else{state="Bot hasn't run in "+Math.floor(ageH/24)+" days";cls="p-bad"}
     line=`Last update ${fmtWhen(feedMeta.stamp)} · ${feedMeta.total} on the list${feedMeta.scanned?` · ${feedMeta.scanned} auctions scanned`:""}${feedMeta.counties.length?` · ${feedMeta.counties.join(", ")}`:""}`;
-    if(cls!=="p-go")line+=". Check that your computer was on with the Claude app open at 6:52 AM and that GitHub is connected.";
+    if(cls!=="p-go")line+=". Check that your computer was on with the Claude app open at 6:52 AM, and that Deal Checker is signed in inside the Claude app’s built-in browser.";
   }
   const all=Store.all(); let a=0,c=0,g=0; for(const p of all){const s=sinceVisit(p);if(s.added)a++;if(s.changed)c++;if(s.gone)g++}
   const since=LAST_VISIT?`since your last visit (${fmtWhen(LAST_VISIT)})`:"since you started";
@@ -865,18 +865,31 @@ async function mergeFeed(items,{markGone=false,feedDate="",scanned=null}={}){
   if(markGone){for(const p of Store.all()){if(!seen.has(p._id)&&/^Watchlist|^Daily/.test(p.source||"")&&isUpcoming(p)&&!p.feedGone){await Store.patch(p._id,{feedGone:true,feedGoneAt:new Date().toISOString()});gone++}}}
   return{added,changed,gone};
 }
+// Apply one daily feed object ({generated, properties, scanned, counties, window}). Used by data/watchlist.json
+// and by the morning bot, which calls window.DC_importFeed(feed) inside this page (Claude's browser pane).
+async function applyFeed(j,{force=false}={}){
+  const stamp=j&&j.generated||""; if(!stamp||!Array.isArray(j.properties))throw new Error("Not a watchlist feed");
+  const meta={stamp,counties:j.counties||[],window:j.window||"",total:j.properties.length,scanned:(j.scanned||[]).length};
+  if(!feedMeta||feedMeta.error||feedMeta.stamp<stamp)feedMeta=meta;
+  if(Store.mode==="login")return{skipped:"not signed in"};
+  const last=Store.mode==="shared"?(Store.cache.__feed?.stamp||""):LS.get("dc_feed_stamp","");
+  if(!force&&last>=stamp)return{skipped:"already applied",stamp};
+  const res=await mergeFeed(j.properties,{markGone:true,feedDate:stamp.slice(0,10),scanned:Array.isArray(j.scanned)?j.scanned:null});
+  if(Store.mode==="shared")await Store.put("__feed",{...meta,hidden:true});else{LS.set("dc_feed_stamp",stamp);LS.set("dc_feed_meta",meta)}
+  if(res.added||res.changed||res.gone)toast(`Watchlist updated ${stamp.slice(0,10)}: ${res.added} new, ${res.changed} changed${res.gone?`, ${res.gone} no longer listed`:""}.`);
+  renderBotBar();
+  return{...res,stamp,mode:Store.mode,total:Store.all().length};
+}
+window.DC_importFeed=feed=>applyFeed(typeof feed==="string"?JSON.parse(feed):feed);
+window.DC_status=()=>({mode:Store.mode,user:Store.user?.email||null,properties:Store.all().length,lastFeed:Store.mode==="shared"?Store.cache.__feed?.stamp||null:LS.get("dc_feed_stamp",null)});
 async function loadFeed(){
+  // the last feed the bot applied (shared list) or this browser applied
+  const saved=Store.mode==="shared"?Store.cache.__feed:LS.get("dc_feed_meta",null);
+  if(saved&&saved.stamp)feedMeta={stamp:saved.stamp,counties:saved.counties||[],window:saved.window||"",total:saved.total||0,scanned:saved.scanned||0};
   try{
-    const r=await fetch("data/watchlist.json?t="+Date.now(),{cache:"no-store"}); if(!r.ok)return;
-    const j=await r.json(); const stamp=j.generated||""; if(!stamp||!Array.isArray(j.properties))return;
-    feedMeta={stamp,counties:j.counties||[],window:j.window||"",total:j.properties.length,scanned:(j.scanned||[]).length};
-    if(Store.mode==="login")return;
-    const last=Store.mode==="shared"?(Store.cache.__feed?.stamp||""):LS.get("dc_feed_stamp","");
-    if(last===stamp)return;
-    const res=await mergeFeed(j.properties,{markGone:true,feedDate:stamp.slice(0,10),scanned:Array.isArray(j.scanned)?j.scanned:null});
-    if(Store.mode==="shared"){await Store.put("__feed",{stamp,hidden:true})}else LS.set("dc_feed_stamp",stamp);
-    if(res.added||res.changed||res.gone)toast(`Watchlist updated ${stamp.slice(0,10)}: ${res.added} new, ${res.changed} changed${res.gone?`, ${res.gone} no longer listed`:""}.`);
-  }catch(e){console.warn("feed",e);feedMeta=feedMeta||{error:true}}
+    const r=await fetch("data/watchlist.json?t="+Date.now(),{cache:"no-store"});
+    if(r.ok)await applyFeed(await r.json());
+  }catch(e){console.warn("feed",e)}
   finally{renderBotBar()}
 }
 (async()=>{

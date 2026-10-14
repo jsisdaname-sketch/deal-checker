@@ -177,3 +177,5 @@ td.r,th.r{text-align:right}
 .botbar .pill{display:inline-flex;align-items:center;gap:6px;font-size:13px}
 .botbar .dot{width:8px;height:8px;border-radius:50%;background:currentColor}
 .botbar .p-go .dot{animation:excelPulse 2s ease-in-out infinite}
+
+.hero .nostreet{position:absolute;left:50%;top:44%;transform:translate(-50%,-50%);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:4px 10px;font-size:12px;color:var(--muted);white-space:nowrap}

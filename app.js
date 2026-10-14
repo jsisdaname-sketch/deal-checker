@@ -22,9 +22,11 @@ const isUpcoming=p=>!p.date||dkey(p.date)>=today;
 function toast(t){const el=$("#toast");el.textContent=t;el.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>el.hidden=true,3000)}
 const zip=p=>(String(p.city||"").match(/\b(\d{5})\b/)||[])[1]||"";
 const cityName=p=>String(p.city||"").replace(/\s*\d{5}.*$/,"").trim();
-const fullAddr=p=>`${String(p.addr||"").replace(/\s*(#|UNIT|APT|STE)\s*\S+$/i,"")}, ${cityName(p)}, FL ${zip(p)}`.replace(/\s+,/g,",");
-function kind(p){const t=(String(p.type||"")+" "+String(p.notes||"")).toUpperCase();
-  if(p.vacant||/VACANT|\bLAND\b|\bLOT\b/.test(t))return"Vacant land";
+const cleanStreet=a=>String(a||"").replace(/\(.*?\)/g," ").replace(/\s*(#|UNIT|APT|STE|BLDG|LOT)\s*[\w-]+\b.*$/i,"").replace(/\s+/g," ").trim();
+const hasStreet=p=>/^\d+\s+\S+/.test(cleanStreet(p.addr))&&!/no situs|no address/i.test(p.addr||"");
+const fullAddr=p=>`${cleanStreet(p.addr)}, ${cityName(p)}, FL ${zip(p)}`.replace(/\s+,/g,",");
+function kind(p){const t=String(p.type||"").toUpperCase().replace(/ZERO\s*LOT(\s*LINE)?/g,"");
+  if(p.vacant||/VACANT|^\s*LAND\b|\bLOTS?\s*$/.test(t)||/^VACANT/i.test(p.notes||""))return"Vacant land";
   if(/MOBILE|MANUFACT/.test(t))return"Mobile home";
   if(/CONDO/.test(t))return"Condo";if(/TOWN/.test(t))return"Townhome";if(/DUPLEX|TRIPLEX|QUAD|MULTI|APART/.test(t))return"Multi-family";
   if(/COMM|OFFICE|STORE|RETAIL|WAREHOUSE|MIXED|CHURCH/.test(t))return"Commercial";return"Single family"}
@@ -153,8 +155,14 @@ function queryProfile(q){
 }
 
 /* ---------- photos & maps ---------- */
-const streetViewUrl=(p,size="640x360")=>S.googleKey?`https://maps.googleapis.com/maps/api/streetview?size=${size}&location=${encodeURIComponent(p.lat?p.lat+","+p.lng:fullAddr(p))}&fov=80&return_error_code=true&key=${encodeURIComponent(S.googleKey)}`:"";
-function photoList(p){const ph=(p.photos||[]).filter(Boolean);const sv=streetViewUrl(p);return sv?[...ph,sv]:ph}
+// Street View: outdoor Google imagery only (no indoor/user-uploaded panoramas), aimed by address; needs a real street address.
+const streetViewUrl=(p,size="640x360")=>S.googleKey&&(hasStreet(p)||(p.lat&&!p.geoApprox))?`https://maps.googleapis.com/maps/api/streetview?size=${size}&location=${encodeURIComponent(hasStreet(p)?fullAddr(p):p.lat+","+p.lng)}&source=outdoor&radius=60&fov=85&return_error_code=true&key=${encodeURIComponent(S.googleKey)}`:"";
+// Satellite photo (free Esri World Imagery, no key) once the property has a map pin.
+const satUrl=(p,w=560,h=300)=>{if(!p.lat||p.geoApprox)return"";const dx=.0011,dy=dx*h/w;return`https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export?bbox=${p.lng-dx},${p.lat-dy},${p.lng+dx},${p.lat+dy}&bboxSR=4326&imageSR=3857&size=${w},${h}&format=jpg&f=image`};
+function autoPhotos(p,size){const sv=streetViewUrl(p,size),sat=satUrl(p);return (kind(p)==="Vacant land"?[sat,sv]:[sv,sat]).filter(Boolean)}
+function photoList(p){return [...(p.photos||[]).filter(Boolean),...autoPhotos(p)]}
+// try each picture in turn; if one fails (no Street View there), show the next one
+window.nextPhoto=img=>{const alts=(img.dataset.alts||"").split("|").filter(Boolean);if(!alts.length){img.remove();return}img.src=alts.shift();img.dataset.alts=alts.join("|")};
 function miniMap(p){
   let h=0;for(const c of String(p.addr||"")+String(p.case||""))h=(h*31+c.charCodeAt(0))>>>0;
   const r=()=>{h=(h*1664525+1013904223)>>>0;return h/4294967296};
@@ -165,8 +173,9 @@ function miniMap(p){
   return s+`<circle cx="140" cy="75" r="7" fill="#0d5c8c"/><circle cx="140" cy="75" r="14" fill="#0d5c8c" opacity=".25"/></svg>`;
 }
 function heroImg(p){
-  const first=(p.photos||[])[0]||streetViewUrl(p,"560x300");
-  return first?`<img class="ph" src="${esc(first)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">`:"";
+  const list=[...(p.photos||[]).slice(0,1),...autoPhotos(p,"560x300")];
+  if(!list.length)return hasStreet(p)?"":`<span class="nostreet">No street address · use the Property Appraiser map</span>`;
+  return `<img class="ph" src="${esc(list[0])}" data-alts="${esc(list.slice(1).join("|"))}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="nextPhoto(this)">`;
 }
 let geoBusy=false;
 async function geocode(p){
@@ -183,6 +192,7 @@ async function geocodeMissing(list,onEach){
   if(geoBusy)return; geoBusy=true;
   try{for(const p of list){
     if(p.lat||p.geoFail)continue;
+    if(!hasStreet(p)){await Store.patch(p._id,{geoFail:true});continue}
     const g=await geocode(p);
     await Store.patch(p._id,g?{lat:g.lat,lng:g.lng,geoApprox:!!g.approx}:{geoFail:true});
     onEach&&onEach();
@@ -369,7 +379,7 @@ function renderList(){
     $("#cards").innerHTML=`<div class="empty" style="grid-column:1/-1">No property on your list matches “${esc(q)}”. <button id="addFromQ" class="primary" style="margin-left:8px">Add it</button>${sim.length?`<p class="small" style="margin-top:14px">Properties on your list most like what you typed:</p>`:""}</div>`+sim.map(p=>card(p,"Similar to your search")).join("");
     $("#addFromQ").onclick=()=>{openAdd();$("#f_addr").value=q.toUpperCase()};
     $("#tbody").innerHTML="";return}
-  if(view==="cards")$("#cards").innerHTML=rows.map(p=>card(p)).join("");
+  if(view==="cards"){$("#cards").innerHTML=rows.map(p=>card(p)).join("");const need=rows.filter(p=>!p.lat&&!p.geoFail&&hasStreet(p));if(need.length&&!geoBusy)geocodeMissing(need.slice(0,60),()=>{})}
   else if(view==="table")$("#tbody").innerHTML=rows.map(p=>{const k=calc(p);return `<tr class="item" data-id="${esc(p._id)}" tabindex="0"><td class="num">${esc(p.date)}</td><td><b>${esc(p.addr)}</b><br><span class="muted small">${esc(p.city)}</span>${p.pid?`<br><button class="copy mini" data-copy="${esc(p.pid)}">${esc(p.pid)} <span class="ci">Copy</span></button>`:""}</td><td>${esc(p.county)}</td><td class="small">${esc(p.channel)}<br><span class="muted">${esc(kind(p))}</span></td><td class="r num">${money(num(p.bid))}</td><td class="r num">${money(k.V)}</td><td class="r num">${k.discPct!=null?Math.round(k.discPct*100)+"%":"—"}</td><td>${tierBtn(p)}</td><td><span class="pill ${k.cls}">${scoreLabel(k)}</span></td><td class="small">${esc(p.status||"Watching")}</td></tr>`}).join("");
   else renderBigMap(rows);
   if(view==="cards"&&!rows.length)$("#cards").innerHTML="";

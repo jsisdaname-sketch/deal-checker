@@ -235,13 +235,40 @@ function parseJSON(t){
   const a=t.indexOf("{"),b=t.lastIndexOf("}");if(a>=0&&b>a){try{return JSON.parse(t.slice(a,b+1))}catch{}}
   throw new Error("The AI answer was not readable. Press the button again.");
 }
-async function askClaude({system,messages,model,maxTokens=4096}){
+// onText(chars) is called as the answer streams in, so the page can show real progress.
+async function askClaude({system,messages,model,maxTokens=4096,onText}){
   if(!S.anthropicKey)throw new Error("Add your Anthropic API key in Settings first.");
   const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"content-type":"application/json","x-api-key":S.anthropicKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-    body:JSON.stringify({model:model||S.model,max_tokens:maxTokens,system,messages})});
+    body:JSON.stringify({model:model||S.model,max_tokens:maxTokens,system,messages,stream:true})});
   if(!r.ok){let m=r.status+"";try{m=(await r.json()).error.message}catch{}
     throw new Error(r.status===401?"Your Anthropic API key was rejected. Check it in Settings.":r.status===429?"Rate limit or spend limit hit. Try again in a minute.":r.status===529?"Claude is busy. Try again in a minute.":"AI error: "+m)}
-  const j=await r.json(); return (j.content||[]).filter(c=>c.type==="text").map(c=>c.text).join("");
+  const reader=r.body.getReader(), dec=new TextDecoder(); let buf="", out="";
+  for(;;){const {value,done}=await reader.read(); if(done)break; buf+=dec.decode(value,{stream:true});
+    let i; while((i=buf.indexOf("\n\n"))>=0){const ev=buf.slice(0,i); buf=buf.slice(i+2);
+      const line=ev.split("\n").find(l=>l.startsWith("data:")); if(!line)continue;
+      let d; try{d=JSON.parse(line.slice(5))}catch{continue}
+      if(d.type==="content_block_delta"&&d.delta&&d.delta.type==="text_delta"){out+=d.delta.text; onText&&onText(out.length)}
+      else if(d.type==="error")throw new Error("AI error: "+(d.error&&d.error.message||"stream failed"));}}
+  return out;
+}
+// Spinner with a percent. Progress = how much of a typical answer has been written (honest estimate), never 100% until done.
+function progressRing(el,{label,expect}){
+  if(!el)return{text(){},done(){},fail(){}};
+  const t0=Date.now(); let chars=0, pct=0, stage=label, dead=false;
+  el.innerHTML=`<span class="prog"><svg viewBox="0 0 36 36" aria-hidden="true"><circle class="bg" cx="18" cy="18" r="15"/><circle class="fg" cx="18" cy="18" r="15" pathLength="100" stroke-dasharray="0 100"/></svg><b class="pp">0%</b></span><span class="plabel"></span>`;
+  const fg=el.querySelector(".fg"), pp=el.querySelector(".pp"), pl=el.querySelector(".plabel");
+  const draw=()=>{if(dead||!el.isConnected)return;
+    const secs=(Date.now()-t0)/1000;
+    const warm=Math.min(18,secs*3); // before words arrive: reading the file
+    const write=chars?18+76*(1-Math.exp(-chars/expect)):0;
+    pct=Math.max(pct,Math.min(97,Math.round(Math.max(warm,write))));
+    fg.setAttribute("stroke-dasharray",pct+" 100"); pp.textContent=pct+"%";
+    pl.textContent=chars?"Writing the "+stage+"…":"Reading the property file…";
+  };
+  const timer=setInterval(draw,250); draw();
+  return{text(n){chars=n},
+    done(msg){dead=true;clearInterval(timer);if(!el.isConnected)return;fg.setAttribute("stroke-dasharray","100 100");pp.textContent="100%";pl.textContent=msg||"Done.";},
+    fail(msg){dead=true;clearInterval(timer);if(el.isConnected)el.innerHTML=`<span class="small" style="color:var(--bad)">${esc(msg)}</span>`;}};
 }
 const userMsg=(text,images=[])=>({role:"user",content:[...images.map(im=>({type:"image",source:{type:"base64",media_type:im.type,data:im.data}})),{type:"text",text}]});
 
@@ -274,13 +301,14 @@ How you examine title:
 - Property taxes always survive. Municipal code enforcement liens, utility liens, special assessments and PACE/clean-energy assessments can survive; require a municipal lien search.
 - Tax deeds (F.S. 197.552) extinguish most private liens, but certain government liens survive; title insurers usually require a quiet title action or wait 4 years before insuring. Note the 90-day surplus / notice issues.
 - Watch for: estate owners (heirs not named), deceased defendants, bankruptcy stays, defective service, vacated judgments, wrong legal description, unrecorded leases/tenants (Protecting Tenants at Foreclosure), open permits, unsafe structure orders, and sales likely to be cancelled or redeemed.
-- Use ONLY the facts and documents provided. Never invent amounts; use null. Say exactly what is missing.`;
+- Use ONLY the facts and documents provided. Never invent amounts; use null. Say exactly what is missing.
+- You ALWAYS have the property file (case number, parcel, sale type, foreclosing party, owner, judgment/opening bid, values, notes). If no recorded documents were pasted, still give a full preliminary opinion from the file: what this kind of sale wipes out and what typically survives, the specific risks this file shows (HOA plaintiff, private lender, estate owner, federal party, tax deed, etc.), and a precise list of which documents to pull next (with the case number and parcel). Set opinion to "Cannot determine from records provided" only for the insurability call, and set titleRisk from what the file shows (do not default to 100).`;
 
 function titlePrompt(p,records,fj){return `PROPERTY FILE
 ${facts(p)}
 
 RECORDED DOCUMENTS (pasted from the Clerk's Official Records search; may be messy table text):
-${records||"(none pasted)"}
+${records||"(none pasted yet: give a preliminary opinion from the property file above, and list exactly what to pull)"}
 
 FINAL JUDGMENT / DOCKET / OTHER NOTES:
 ${fj||"(none pasted)"}
@@ -506,9 +534,9 @@ function renderDetail(fresh){
 
   <div class="panel ai">
    <div class="sechead"><h3>AI title attorney</h3><span class="small muted">Model: ${esc(S.titleModel)}</span></div>
-   <p class="small">1. Open <b>County records</b> below and search the owner’s name and the parcel number. 2. Copy the whole results list and paste it here. 3. Paste the final judgment or docket text if you have it, or attach screenshots. 4. Press <b>Examine title</b>.</p>
-   <label class="small muted" for="d_records">Recorded documents (mortgages, liens, judgments, lis pendens, satisfactions)</label>
-   <textarea id="d_records" class="mono" rows="7" placeholder="Paste the county records search results here">${esc(p.records||"")}</textarea>
+   <p class="small">The attorney already has this property’s file: case <b class="num">${esc(p.case||"—")}</b>, parcel <b class="num">${esc(p.pid||"—")}</b>, ${esc(p.plaintiff||"foreclosing party unknown")}, bid and values. Press <b>Examine title</b> for an opinion right now. For a sharper answer, paste the county records list below (optional).</p>
+   <label class="small muted" for="d_records">Recorded documents (optional): mortgages, liens, judgments, lis pendens, satisfactions</label>
+   <textarea id="d_records" class="mono" rows="5" placeholder="Optional. County records → search the parcel ${esc(p.pid||"")} → copy the results → paste here">${esc(p.records||"")}</textarea>
    <label class="small muted" for="d_fj">Final judgment, docket or notes from the title company (optional)</label>
    <textarea id="d_fj" class="mono" rows="4">${esc(p.fj||"")}</textarea>
    <div class="row"><label class="small muted" for="d_imgs">Screenshots (optional)</label><input type="file" id="d_imgs" accept="image/*" multiple>
@@ -560,7 +588,7 @@ function renderDetail(fresh){
   }
 }
 function renderIns(a,at){
-  const L_=(arr,f)=>arr&&arr.length?`<ul>${arr.map(f).join("")}</ul>`:`<p class="muted small">None.</p>`;
+  const L_=(arr,f)=>{if(arr!=null&&!Array.isArray(arr))arr=[arr];return arr&&arr.length?`<ul>${arr.map(f).join("")}</ul>`:`<p class="muted small">None.</p>`};
   const vc={"Strong buy":"p-go","Buy":"p-go","Maybe":"p-warn","Pass":"p-bad"}[a.verdict]||"p-grey";
   return `<div class="two" style="margin-top:6px">
    <div><p style="font-size:16px;font-weight:600">${esc(a.headline||"")}</p><p class="small" style="margin-top:6px"><span class="pill ${vc}">${esc(a.verdict||"—")}</span> <span class="muted">· best strategy: <b>${esc(a.strategy||"—")}</b>${at?" · "+esc(new Date(at).toLocaleDateString()):""}</span></p>
@@ -571,7 +599,7 @@ function renderIns(a,at){
     ${a.maxBidSuggestion!=null?`<h3 style="margin-top:12px">Suggested ceiling</h3><p><b class="num">${money(num(a.maxBidSuggestion))}</b> <span class="small muted">${esc(a.maxBidWhy||"")}</span></p>`:""}</div></div>`;
 }
 function renderMemo(a,at){
-  const L_=(arr,f)=>arr&&arr.length?`<ul>${arr.map(f).join("")}</ul>`:`<p class="muted small">None.</p>`;
+  const L_=(arr,f)=>{if(arr!=null&&!Array.isArray(arr))arr=[arr];return arr&&arr.length?`<ul>${arr.map(f).join("")}</ul>`:`<p class="muted small">None.</p>`};
   const oc=/^Insurable$/.test(a.opinion||"")?"p-go":/with exceptions/.test(a.opinion||"")?"p-warn":/Not insurable/.test(a.opinion||"")?"p-bad":"p-grey";
   return `<div class="memo">
    <div class="row"><span class="pill ${oc}" style="font-size:14px">${esc(a.opinion||"—")}</span><span class="small muted">Title risk ${esc(a.titleRisk)}/100 · foreclosing party: ${esc(a.plaintiffPosition||"unknown")}${a.dealBreaker?" · <b style='color:var(--bad)'>DEAL-BREAKER</b>":""}${at?" · "+esc(new Date(at).toLocaleString()):""}</span></div>
@@ -622,27 +650,30 @@ function wireDetail(p){
 let aiRunning=false;
 async function runTitle(p){
   const records=$("#d_records").value.trim(), fj=$("#d_fj").value.trim(), files=[...$("#d_imgs").files];
-  if(!records&&!fj&&!files.length){$("#aiStatus").textContent="Paste the county records list first.";return}
-  const btn=$("#runAi");btn.disabled=true;aiRunning=true;$("#aiStatus").textContent="Examining title… usually 30–90 seconds.";
+  const btn=$("#runAi");btn.disabled=true;aiRunning=true;
+  const pr=progressRing($("#aiStatus"),{label:"title opinion",expect:3500});
   try{
     const imgs=[];for(const f of files.slice(0,8))imgs.push(await fileToImage(f));
-    const text=await askClaude({system:ATTORNEY,model:S.titleModel,maxTokens:6000,messages:[userMsg(titlePrompt(p,records.slice(0,80000),fj.slice(0,40000)),imgs)]});
+    const text=await askClaude({system:ATTORNEY,model:S.titleModel,maxTokens:6000,onText:n=>pr.text(n),messages:[userMsg(titlePrompt(p,records.slice(0,80000),fj.slice(0,40000)),imgs)]});
+    pr.done("Title opinion ready.");
     const res=parseJSON(text); res.titleRisk=Math.max(0,Math.min(100,num(res.titleRisk)??100));
     aiRunning=false;
     await Store.patch(p._id,{records:records.slice(0,80000),fj:fj.slice(0,40000),ai:{result:res,at:new Date().toISOString()}});
     toast("Title examination done.");
-  }catch(e){aiRunning=false;const s=$("#aiStatus");if(s)s.textContent=e.message||"Something went wrong."}finally{aiRunning=false;const b=$("#runAi");if(b)b.disabled=false}
+  }catch(e){aiRunning=false;pr.fail(e.message||"Something went wrong.")}finally{aiRunning=false;const b=$("#runAi");if(b)b.disabled=false}
 }
 async function urlToImage(u){ // only works when the photo host allows it; otherwise skipped
   try{const r=await fetch(u,{mode:"cors"});if(!r.ok)return null;const b=await r.blob();if(!/^image\//.test(b.type)||b.size>4.5e6)return null;return await fileToImage(new File([b],"photo",{type:b.type}))}catch{return null}
 }
 async function runIns(p){
-  const btn=$("#runIns");btn.disabled=true;aiRunning=true;$("#insStatus").textContent="Thinking… 20–60 seconds.";
+  const btn=$("#runIns");btn.disabled=true;aiRunning=true;
+  const pr=progressRing($("#insStatus"),{label:"analysis",expect:1800});
   try{
     const imgs=[];for(const u of (p.photos||[]).slice(0,3)){const im=await urlToImage(u);if(im)imgs.push(im)}
-    const res=parseJSON(await askClaude({system:INSIGHTS,messages:[userMsg(insPrompt(p),imgs)],maxTokens:3000}));
+    const res=parseJSON(await askClaude({system:INSIGHTS,messages:[userMsg(insPrompt(p),imgs)],maxTokens:3000,onText:n=>pr.text(n)}));
+    pr.done("Analysis ready.");
     aiRunning=false; await Store.patch(p._id,{insights:{result:res,at:new Date().toISOString()}}); toast("Analysis done.");
-  }catch(e){aiRunning=false;const s=$("#insStatus");if(s)s.textContent=e.message}finally{aiRunning=false;const b=$("#runIns");if(b)b.disabled=false}
+  }catch(e){aiRunning=false;pr.fail(e.message)}finally{aiRunning=false;const b=$("#runIns");if(b)b.disabled=false}
 }
 async function runChat(p){
   const q=$("#chatIn").value.trim(); if(!q)return;

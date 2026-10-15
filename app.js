@@ -38,7 +38,10 @@ const safeId=s=>String(s||"").replace(/[^A-Za-z0-9_-]/g,"").slice(0,120);
 
 /* ---------- settings (this browser only) ---------- */
 const LS={get(k,d){try{const v=localStorage.getItem(k);return v==null?d:JSON.parse(v)}catch{return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch{}}};
-let S=Object.assign({anthropicKey:"",model:"claude-sonnet-5-5",titleModel:"claude-opus-5-5",googleKey:"",sbUrl:"https://djlcwpyquslmuhqymqip.supabase.co",sbKey:"sb_publishable_g3caGhTyfmWt0YlEvsPjhw_S1YdSUYY"},LS.get("dc_settings",{}));
+// Shared defaults for both partners (public keys only: Supabase publishable key, Google key restricted to this site).
+const DEFAULTS={googleKey:"AIzaSyDCt0yB_TjcJa1Dj94CFl_qVEI5wc3H7zg",sbUrl:"https://djlcwpyquslmuhqymqip.supabase.co",sbKey:"sb_publishable_g3caGhTyfmWt0YlEvsPjhw_S1YdSUYY"};
+let S=Object.assign({anthropicKey:"",model:"claude-sonnet-5-5",titleModel:"claude-opus-5-5",...DEFAULTS},LS.get("dc_settings",{}));
+for(const k in DEFAULTS)if(!S[k]||/^PASTE-/.test(S[k]))S[k]=/^PASTE-/.test(DEFAULTS[k])?"":DEFAULTS[k];
 const saveSettings=()=>LS.set("dc_settings",S);
 
 /* ---------- storage: local or Supabase ---------- */

@@ -86,7 +86,38 @@ const Store={
   onChange(f){this.listeners.push(f)}, emit(){this.listeners.forEach(f=>f())}
 };
 
+/* ---------- research file: history, documents, same-parcel memory ---------- */
+const pidDigits=x=>String(x&&x.pid||"").replace(/\D/g,"");
+const hasResearch=x=>!!(x&&(x.ai||x.insights||(x.history||[]).length||(x.docs||[]).length||(x.chat||[]).length));
+let _pidIdx=null,_pidFor=null;
+function samePid(p){if(_pidFor!==props){_pidFor=props;_pidIdx={};for(const x of props){const d=pidDigits(x);if(d.length>=8)(_pidIdx[d]=_pidIdx[d]||[]).push(x)}}const d=pidDigits(p);return d.length>=8?(_pidIdx[d]||[]).filter(x=>x._id!==p._id):[]}
+const seenBefore=p=>hasResearch(p)||samePid(p).some(hasResearch);
+function withHist(id,entry){const cur=Store.get(id)||{};return [...(cur.history||[]),{at:new Date().toISOString(),...entry}].slice(-60)}
+async function uploadDocs(id,files,label){const out=[];if(Store.mode!=="shared")return out;for(const f of files){try{out.push({url:await Store.upload(id,f),name:label?label+" - "+f.name:f.name,type:f.type||"",at:new Date().toISOString()})}catch(e){console.error(e)}}return out}
+function docThumb(d){const img=/^image\//.test(d.type||"")||/\.(png|jpe?g|gif|webp)(\?|$)/i.test(d.url||"");
+  return `<a href="${esc(d.url)}" target="_blank" rel="noopener" class="doc" style="display:inline-flex;flex-direction:column;gap:4px;width:150px;margin:0 8px 8px 0;text-decoration:none">${img?`<img src="${esc(d.url)}" alt="${esc(d.name||"document")}" loading="lazy" style="width:150px;height:110px;object-fit:cover;border-radius:6px;border:1px solid var(--line,#ccc)">`:`<span class="tag" style="height:110px;display:flex;align-items:center;justify-content:center">PDF / file</span>`}<span class="small" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.name||"document")}</span><span class="small muted">${d.at?esc(new Date(d.at).toLocaleDateString()):""}</span></a>`}
+function histLabel(h){return h.type==="title"?"AI title exam":h.type==="analysis"?"AI property analysis":h.type==="qa"?"Question to the title attorney":h.type==="research"?(h.title||"Research"):"Saved item"}
+function histBody(h){
+  if(h.type==="title"&&h.result)return renderMemo(h.result,h.at);
+  if(h.type==="analysis"&&h.result)return renderIns(h.result,h.at);
+  if(h.type==="qa")return `<p class="small"><b>Q:</b> ${esc(h.q)}</p><p class="small" style="white-space:pre-wrap"><b>A:</b> ${esc(h.a)}</p>`;
+  return `<div class="small" style="white-space:pre-wrap">${esc(h.text||"")}</div>${(h.docs||[]).length?`<div style="margin-top:8px">${h.docs.map(docThumb).join("")}</div>`:""}`}
+function renderResearch(p){
+  const hist=[...(p.history||[])].reverse(), docs=p.docs||[], rel=samePid(p).filter(hasResearch);
+  return `<div class="panel">
+   <div class="sechead"><h3>Research file <span class="muted" style="text-transform:none;letter-spacing:0">· everything saved on this property</span></h3>
+     <div class="row"><label class="small" for="r_docs" style="cursor:pointer;text-decoration:underline">${Store.mode==="shared"?"Add document (mortgage, deed, judgment…)":"Document upload needs the shared list"}</label><input type="file" id="r_docs" accept="image/*,application/pdf" multiple hidden ${Store.mode==="shared"?"":"disabled"}></div></div>
+   ${rel.length?`<div class="tag good" style="display:block;padding:8px 10px;margin-bottom:10px;font-size:13px"><b>Seen before:</b> this parcel was researched under ${rel.map(x=>`<button class="link" data-goto="${esc(x._id)}">${esc(x.case||x._id)} (${esc(x.date||"no date")}, ${(x.history||[]).length} saved item${(x.history||[]).length===1?"":"s"})</button>`).join(", ")}.</div>`:""}
+   <h3 style="margin-top:4px">Documents (${docs.length})</h3>
+   ${docs.length?`<div>${docs.map(docThumb).join("")}</div>`:`<p class="small muted">No documents yet. Screenshots you give the title attorney and documents you add here are kept for good.</p>`}
+   <div class="row" style="margin-top:10px"><input id="r_title" style="flex:1 1 200px" placeholder="Note title (e.g. Mortgage search 10/15)"><button id="r_add">Save note</button></div>
+   <textarea id="r_text" rows="3" placeholder="Paste findings to keep: what the clerk records showed, title company answers, phone calls…"></textarea>
+   <h3 style="margin-top:12px">History (${hist.length})</h3>
+   ${hist.length?hist.map(h=>`<details style="margin:6px 0"><summary class="small"><b>${esc(histLabel(h))}</b> · ${esc(new Date(h.at).toLocaleString())}${h.by?" · "+esc(h.by):""}${h.type==="title"&&h.result?" · mortgages: "+esc(mortStatus(h.result)):""}${h.type==="qa"?" · "+esc(String(h.q||"").slice(0,80)):""}</summary><div style="margin-top:8px">${histBody(h)}</div></details>`).join(""):`<p class="small muted">Every title exam, analysis, question and note will be saved here, newest first.</p>`}
+  </div>`}
+
 /* ---------- scoring ---------- */
+function mortStatus(a){const s=String(a&&a.mortgageCheck&&a.mortgageCheck.status||"").toUpperCase();return /OPEN/.test(s)?"OPEN":/CLEAR/.test(s)?"CLEAR":"NOT VERIFIED"}
 function calc(p){
   const V=num(p.comp)||num(p.value), bid=num(p.bid);
   const ai=p.ai&&p.ai.result;
@@ -113,7 +144,8 @@ function calc(p){
   else if(ai&&ai.dealBreaker){out.verdict="PASS";out.cls="p-bad";out.why="The AI title attorney found a deal-breaker."}
   else if(!ai){out.verdict="TITLE NOT CHECKED";out.cls="p-grey";out.why="Run the AI title attorney before trusting the score."}
   else if(out.profit<=0){out.verdict="PASS";out.cls="p-bad";out.why="No profit at this bid."}
-  else if(out.score>=75){out.verdict="GO";out.cls="p-go"}
+  else if(out.score>=75&&mortStatus(ai)==="CLEAR"){out.verdict="GO";out.cls="p-go"}
+  else if(out.score>=55&&mortStatus(ai)!=="CLEAR"){out.verdict="MAYBE";out.cls="p-warn";out.why=mortStatus(ai)==="OPEN"?"An open mortgage was found. Check whether it survives and what it costs before bidding.":"Mortgages not verified yet. Finish the mortgage search in the AI title attorney first."}
   else if(out.score>=55){out.verdict="MAYBE";out.cls="p-warn"}
   else {out.verdict="PASS";out.cls="p-bad"}
   return out;
@@ -339,7 +371,14 @@ How you examine title:
 - Tax deeds (F.S. 197.552) extinguish most private liens, but certain government liens survive; title insurers usually require a quiet title action or wait 4 years before insuring. Note the 90-day surplus / notice issues.
 - Watch for: estate owners (heirs not named), deceased defendants, bankruptcy stays, defective service, vacated judgments, wrong legal description, unrecorded leases/tenants (Protecting Tenants at Foreclosure), open permits, unsafe structure orders, and sales likely to be cancelled or redeemed.
 - Use ONLY the facts and documents provided. Never invent amounts; use null. Say exactly what is missing.
-- You ALWAYS have the property file (case number, parcel, sale type, foreclosing party, owner, judgment/opening bid, values, notes). If no recorded documents were pasted, still give a full preliminary opinion from the file: what this kind of sale wipes out and what typically survives, the specific risks this file shows (HOA plaintiff, private lender, estate owner, federal party, tax deed, etc.), and a precise list of which documents to pull next (with the case number and parcel). Set opinion to "Cannot determine from records provided" only for the insurability call, and set titleRisk from what the file shows (do not default to 100).`;
+- You ALWAYS have the property file (case number, parcel, sale type, foreclosing party, owner, judgment/opening bid, values, notes). If no recorded documents were pasted, still give a full preliminary opinion from the file: what this kind of sale wipes out and what typically survives, the specific risks this file shows (HOA plaintiff, private lender, estate owner, federal party, tax deed, etc.), and a precise list of which documents to pull next (with the case number and parcel). Set opinion to "Cannot determine from records provided" only for the insurability call, and set titleRisk from what the file shows (do not default to 100).
+
+MANDATORY MORTGAGE CHECK (every examination, no exceptions; the clients said this is a must):
+- Fill "mortgageCheck" first. List EVERY mortgage you can see in the records provided (purchase money, refinance, HELOC/line of credit, reverse mortgage/HECM and its HUD second, private/hard-money, seller financing, mortgage modifications and assignments). For each: lender, recording date, book/page or instrument #, amount if shown, position (1st/2nd/etc.), whether a satisfaction/release is recorded (cite it), and what THIS sale does to it (wiped out / SURVIVES / unknown) and why.
+- status "CLEAR" only if the records provided cover the current owner AND every owner back to the last arm's-length purchase (and any prior foreclosure that cleared title), and every mortgage found has a recorded satisfaction or is wiped out by this sale. Say exactly what was searched.
+- status "OPEN MORTGAGE FOUND" if any mortgage has no recorded satisfaction. If it survives this sale (e.g. HOA/condo sale, tax deed with a government-held mortgage, junior foreclosure, omitted party), it MUST also appear in "survives" with its amount (use null if unknown) and you must say plainly the buyer would take the house subject to that debt.
+- status "NOT VERIFIED" whenever no recorded documents were pasted or the records do not cover all the owners above. Never assume there is no mortgage because none was pasted. Then give step-by-step "howToVerify" for THIS county: Palm Beach = erec.mypalmbeachclerk.com Name Search; Broward = officialrecords.broward.org; Miami-Dade = onlineservices.miamidadeclerk.gov/officialrecords. Search each owner name (current owner, prior owners, trusts/estates/LLCs in the chain) with Document Category "Mortgage", then again for "Release/Satisfaction" and "Assignment", plus the parcel number; and read the Final Judgment to see which mortgage is being foreclosed.
+- HOA/condo association or other junior-lien sale with status NOT VERIFIED: opinion "Cannot determine from records provided", titleRisk at least 60. HOA/condo sale with an OPEN first mortgage of unknown amount: dealBreaker true. Bank first-mortgage foreclosure: confirm the foreclosed mortgage is the oldest open mortgage; any older open mortgage survives.`;
 
 function titlePrompt(p,records,fj){return `PROPERTY FILE
 ${facts(p)}
@@ -351,7 +390,12 @@ FINAL JUDGMENT / DOCKET / OTHER NOTES:
 ${fj||"(none pasted)"}
 
 Write your preliminary title examination as ONE JSON object, no other text, exactly this shape:
-{"opinion":"Insurable | Insurable with exceptions | Not insurable without curative work | Cannot determine from records provided",
+{"mortgageCheck":{"status":"CLEAR | OPEN MORTGAGE FOUND | NOT VERIFIED",
+   "headline":"one plain-English sentence about mortgages on this property",
+   "searched":"exactly which records you reviewed (names, parcel, date range) or 'none provided'",
+   "mortgages":[{"lender":"...","recorded":"date","ref":"book/page or instrument #","amount":number or null,"position":"1st | 2nd | HELOC | reverse | private | unknown","satisfied":"yes (cite satisfaction) | no | unknown","effect":"wiped out | SURVIVES | unknown","why":"..."}],
+   "howToVerify":["exact steps to finish the mortgage search for this county"]},
+ "opinion":"Insurable | Insurable with exceptions | Not insurable without curative work | Cannot determine from records provided",
  "summary":"3-5 sentences, your bottom line as their attorney",
  "vesting":"who holds title now and how they got it",
  "plaintiffPosition":"first mortgage | second mortgage | HOA/condo | tax deed | private lender | unknown",
@@ -388,7 +432,7 @@ function patchLater(id,field,val){clearTimeout(deb[field]);deb[field]=setTimeout
 function card(p,extraTag){
   const k=calc(p), d=daysTo(p.date), n=(p.photos||[]).length;
   const disc=k.discPct!=null?`<span class="disc${k.discPct<0?" neg":""}">${Math.round(Math.abs(k.discPct)*100)}% ${k.discPct>=0?"below":"above"} value</span>`:`<span class="muted">value not found</span>`;
-  const tags=[kind(p),p.zoning?"Zoning "+p.zoning:null,k.landShare!=null&&k.landShare>=.5?["Land "+Math.round(k.landShare*100)+"% of value","good"]:null,extraTag].filter(Boolean)
+  const tags=[kind(p),p.zoning?"Zoning "+p.zoning:null,k.landShare!=null&&k.landShare>=.5?["Land "+Math.round(k.landShare*100)+"% of value","good"]:null,seenBefore(p)?["Researched before","good"]:null,extraTag].filter(Boolean)
     .map(t=>Array.isArray(t)?`<span class="tag ${t[1]}">${esc(t[0])}</span>`:`<span class="tag">${esc(t)}</span>`).join("");
   const listing=/Listing|Off-market/.test(p.channel||"");
   return `<article class="card${p._id===selId?" sel":""}${tierOf(p)==="EXCELLENT"?" excel":""}" data-id="${esc(p._id)}" tabindex="0" role="button" aria-label="${esc(p.addr)}">
@@ -572,8 +616,8 @@ function renderDetail(fresh){
   <div class="panel ai">
    <div class="sechead"><h3>AI title attorney</h3><span class="small muted">Model: ${esc(S.titleModel)}</span></div>
    <p class="small">The attorney already has this property’s file: case <b class="num">${esc(p.case||"—")}</b>, parcel <b class="num">${esc(p.pid||"—")}</b>, ${esc(p.plaintiff||"foreclosing party unknown")}, bid and values. Press <b>Examine title</b> for an opinion right now. For a sharper answer, paste the county records list below (optional).</p>
-   <label class="small muted" for="d_records">Recorded documents (optional): mortgages, liens, judgments, lis pendens, satisfactions</label>
-   <textarea id="d_records" class="mono" rows="5" placeholder="Optional. County records → search the parcel ${esc(p.pid||"")} → copy the results → paste here">${esc(p.records||"")}</textarea>
+   <label class="small" for="d_records"><b>Recorded documents — needed for the mortgage check.</b> Search the county records by every owner's name (and the parcel), Document Category <b>Mortgage</b>, then <b>Release/Satisfaction</b>, and paste the results here. Liens, judgments and lis pendens help too.</label>
+   <textarea id="d_records" class="mono" rows="5" placeholder="County records → search the owner names and parcel ${esc(p.pid||"")} → copy the results → paste here">${esc(p.records||"")}</textarea>
    <label class="small muted" for="d_fj">Final judgment, docket or notes from the title company (optional)</label>
    <textarea id="d_fj" class="mono" rows="4">${esc(p.fj||"")}</textarea>
    <div class="row"><label class="small muted" for="d_imgs">Screenshots (optional)</label><input type="file" id="d_imgs" accept="image/*" multiple>
@@ -583,6 +627,8 @@ function renderDetail(fresh){
    <div class="chat" id="chat">${(p.chat||[]).map(m=>`<div class="msg ${m.role}">${esc(m.content)}</div>`).join("")||`<p class="small muted">Ask follow-ups like “If HUD redeems, do I get my money back?” or “What should I bid max?”</p>`}</div>
    <form id="chatForm" class="row"><input id="chatIn" style="flex:1 1 260px" placeholder="Ask about this property’s title…"><button class="primary" type="submit">Ask</button><button type="button" id="chatClear" class="ghost small">Clear</button></form>
   </div>
+
+  ${renderResearch(p)}
 
   <div class="two">
    <div class="panel"><h3>Property facts</h3>
@@ -638,7 +684,17 @@ function renderIns(a,at){
 function renderMemo(a,at){
   const L_=(arr,f)=>{if(arr!=null&&!Array.isArray(arr))arr=[arr];return arr&&arr.length?`<ul>${arr.map(f).join("")}</ul>`:`<p class="muted small">None.</p>`};
   const oc=/^Insurable$/.test(a.opinion||"")?"p-go":/with exceptions/.test(a.opinion||"")?"p-warn":/Not insurable/.test(a.opinion||"")?"p-bad":"p-grey";
-  return `<div class="memo">
+  const mc=a.mortgageCheck||null, ms=mortStatus(a);
+  const mcls=ms==="CLEAR"?"p-go":ms==="OPEN"?"p-bad":"p-warn";
+  const mtxt=ms==="CLEAR"?"MORTGAGES: CLEAR":ms==="OPEN"?"MORTGAGE: OPEN MORTGAGE FOUND":"MORTGAGES: NOT VERIFIED";
+  const mbox=`<div class="panel" style="border-width:2px;margin:0 0 12px">
+     <div class="row"><span class="pill ${mcls}" style="font-size:15px">${mtxt}</span>${mc&&mc.headline?`<b>${esc(mc.headline)}</b>`:""}</div>
+     ${!mc?`<p class="small">This opinion was made before the mortgage check was added. Press <b>Examine title</b> again.</p>`:""}
+     ${mc&&mc.mortgages&&mc.mortgages.length?`<ul>${mc.mortgages.map(m=>`<li><b>${esc(m.lender||"Lender ?")}</b>${m.recorded?" · recorded "+esc(m.recorded):""}${m.ref?" · "+esc(m.ref):""}${num(m.amount)?" · "+money(num(m.amount)):""}${m.position?" · "+esc(m.position):""} — satisfied: <b>${esc(m.satisfied||"unknown")}</b> — this sale: <b style="color:${/SURVIV/i.test(m.effect||"")?"var(--bad)":"inherit"}">${esc(m.effect||"unknown")}</b>${m.why?`<br><span class="small muted">${esc(m.why)}</span>`:""}</li>`).join("")}</ul>`:mc?`<p class="small">No mortgages found in the records provided.</p>`:""}
+     ${mc&&mc.searched?`<p class="small muted">Searched: ${esc(mc.searched)}</p>`:""}
+     ${mc&&ms!=="CLEAR"&&mc.howToVerify&&mc.howToVerify.length?`<p class="small"><b>Finish the mortgage search:</b></p><ol class="small">${[].concat(mc.howToVerify).map(x=>`<li>${esc(x)}</li>`).join("")}</ol><p class="small muted">Paste what you find into “Recorded documents” and press Examine title again.</p>`:""}
+   </div>`;
+  return `<div class="memo">${mbox}
    <div class="row"><span class="pill ${oc}" style="font-size:14px">${esc(a.opinion||"—")}</span><span class="small muted">Title risk ${esc(a.titleRisk)}/100 · foreclosing party: ${esc(a.plaintiffPosition||"unknown")}${a.dealBreaker?" · <b style='color:var(--bad)'>DEAL-BREAKER</b>":""}${at?" · "+esc(new Date(at).toLocaleString()):""}</span></div>
    <p class="opinion">${esc(a.summary||"")}</p>
    ${a.bidAdvice?`<p><b>At the auction:</b> ${esc(a.bidAdvice)}</p>`:""}
@@ -679,6 +735,10 @@ function wireDetail(p){
     if(!m){toast("Could not find coordinates in that. Paste a Google Maps link with @lat,lng or type “26.71, -80.05”.");return}
     Store.patch(id,{lat:+m[1],lng:+m[2],geoApprox:false,geoFail:false});toast("Pin set.")};
   $("#runAi").onclick=()=>runTitle(p); $("#runIns").onclick=()=>runIns(p);
+  document.querySelectorAll("[data-goto]").forEach(b=>b.onclick=()=>openDetail(b.dataset.goto));
+  $("#r_docs").onchange=async e=>{const files=[...e.target.files];if(!files.length)return;toast("Uploading…");const d=await uploadDocs(id,files);if(!d.length){toast("Upload failed.");return}
+    await Store.patch(id,{docs:[...((Store.get(id)||{}).docs||[]),...d],history:withHist(id,{type:"research",title:"Documents added",text:d.map(x=>x.name).join("\n"),docs:d})});toast("Saved to the research file.")};
+  $("#r_add").onclick=async()=>{const text=$("#r_text").value.trim();if(!text)return;await Store.patch(id,{history:withHist(id,{type:"research",title:$("#r_title").value.trim()||"Note",text})});toast("Note saved.")};
   $("#chatForm").onsubmit=e=>{e.preventDefault();runChat(p)};
   $("#chatClear").onclick=()=>Store.patch(id,{chat:[]});
 }
@@ -695,7 +755,10 @@ async function runTitle(p){
     const res=await parseOrFix(text,pr);
     pr.done("Title opinion ready."); res.titleRisk=Math.max(0,Math.min(100,num(res.titleRisk)??100));
     aiRunning=false;
-    await Store.patch(p._id,{records:records.slice(0,80000),fj:fj.slice(0,40000),ai:{result:res,at:new Date().toISOString()}});
+    const saved=await uploadDocs(p._id,files.slice(0,8),"Title exam");
+    await Store.patch(p._id,{records:records.slice(0,80000),fj:fj.slice(0,40000),ai:{result:res,at:new Date().toISOString()},
+      docs:[...((Store.get(p._id)||{}).docs||[]),...saved],
+      history:withHist(p._id,{type:"title",result:res,records:records.slice(0,20000),fj:fj.slice(0,8000),docs:saved})});
     toast("Title examination done.");
   }catch(e){aiRunning=false;pr.fail(e.message||"Something went wrong.")}finally{aiRunning=false;const b=$("#runAi");if(b)b.disabled=false}
 }
@@ -709,7 +772,7 @@ async function runIns(p){
     const imgs=[];for(const u of (p.photos||[]).slice(0,3)){const im=await urlToImage(u);if(im)imgs.push(im)}
     const res=await parseOrFix(await askClaude({system:INSIGHTS,messages:[userMsg(insPrompt(p),imgs)],maxTokens:8000,onText:n=>pr.text(n)}),pr);
     pr.done("Analysis ready.");
-    aiRunning=false; await Store.patch(p._id,{insights:{result:res,at:new Date().toISOString()}}); toast("Analysis done.");
+    aiRunning=false; await Store.patch(p._id,{insights:{result:res,at:new Date().toISOString()},history:withHist(p._id,{type:"analysis",result:res})}); toast("Analysis done.");
   }catch(e){aiRunning=false;pr.fail(e.message)}finally{aiRunning=false;const b=$("#runIns");if(b)b.disabled=false}
 }
 async function runChat(p){
@@ -722,7 +785,7 @@ async function runChat(p){
     const msgs=[{role:"user",content:ctx},{role:"assistant",content:"Understood. I have the file. What would you like to know?"},...hist.map(m=>({role:m.role,content:m.content}))];
     const ans=await askClaude({system:ATTORNEY,model:S.titleModel,messages:msgs,maxTokens:1500});
     hist.push({role:"assistant",content:ans.trim()});
-    aiRunning=false; await Store.patch(p._id,{chat:hist.slice(-20)});
+    aiRunning=false; await Store.patch(p._id,{chat:hist.slice(-20),history:withHist(p._id,{type:"qa",q,a:ans.trim()})});
   }catch(e){aiRunning=false;const el=$("#pending");if(el){el.textContent=e.message;el.removeAttribute("id")}}
 }
 
@@ -948,6 +1011,13 @@ async function applyFeed(j,{force=false}={}){
   renderBotBar();
   return{...res,stamp,mode:Store.mode,total:Store.all().length};
 }
+// Save research from Claude's sessions: DC_addResearch({id or pid, title, text, by, docs:[{url,name}]})
+window.DC_addResearch=async r=>{let id=r.id&&Store.get(r.id)?r.id:null;
+  if(!id&&r.pid){const d=String(r.pid).replace(/\D/g,"");const m=Store.all().filter(x=>pidDigits(x)===d).sort((a,b)=>dkey(b.date).localeCompare(dkey(a.date)));if(m.length)id=m[0]._id}
+  if(!id)throw new Error("Property not found");
+  const docs=(r.docs||[]).map(d=>({at:new Date().toISOString(),...d}));
+  await Store.patch(id,{history:withHist(id,{type:"research",title:r.title||"Research",text:r.text||"",by:r.by||"Claude",docs}),...(docs.length?{docs:[...((Store.get(id)||{}).docs||[]),...docs]}:{})});
+  return{id,items:(Store.get(id).history||[]).length}};
 window.DC_importFeed=feed=>applyFeed(typeof feed==="string"?JSON.parse(feed):feed);
 window.DC_status=()=>({mode:Store.mode,user:Store.user?.email||null,properties:Store.all().length,lastFeed:Store.mode==="shared"?Store.cache.__feed?.stamp||null:LS.get("dc_feed_stamp",null)});
 async function loadFeed(){

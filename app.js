@@ -38,7 +38,7 @@ const safeId=s=>String(s||"").replace(/[^A-Za-z0-9_-]/g,"").slice(0,120);
 
 /* ---------- settings (this browser only) ---------- */
 const LS={get(k,d){try{const v=localStorage.getItem(k);return v==null?d:JSON.parse(v)}catch{return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch{}}};
-let S=Object.assign({anthropicKey:"",model:"claude-sonnet-5-5",titleModel:"claude-opus-5-5",googleKey:"",sbUrl:"",sbKey:""},LS.get("dc_settings",{}));
+let S=Object.assign({anthropicKey:"",model:"claude-sonnet-5-5",titleModel:"claude-opus-5-5",googleKey:"",sbUrl:"https://djlcwpyquslmuhqymqip.supabase.co",sbKey:"PASTE-ANON-KEY-HERE"},LS.get("dc_settings",{}));
 const saveSettings=()=>LS.set("dc_settings",S);
 
 /* ---------- storage: local or Supabase ---------- */
@@ -52,7 +52,7 @@ const Store={
         this.user=data.session?.user||null;
         this.sb.auth.onAuthStateChange((_e,sess)=>{const had=!!this.user;this.user=sess?.user||null;if(!!this.user!==had)location.reload()});
         if(this.user){this.mode="shared";await this.load();this.subscribe();return}
-        this.mode="login";return;
+        this.mode="shared";await this.load();this.subscribe();return;
       }catch(e){console.error(e);this.mode="local";toast("Could not reach Supabase. Using this browser only.")}
     }
     this.mode="local"; this.cache=LS.get("dc_props",{});

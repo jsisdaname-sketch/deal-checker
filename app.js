@@ -38,7 +38,7 @@ const safeId=s=>String(s||"").replace(/[^A-Za-z0-9_-]/g,"").slice(0,120);
 
 /* ---------- settings (this browser only) ---------- */
 const LS={get(k,d){try{const v=localStorage.getItem(k);return v==null?d:JSON.parse(v)}catch{return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch{}}};
-let S=Object.assign({anthropicKey:"",model:"claude-sonnet-5-5",titleModel:"claude-opus-5-5",googleKey:"",sbUrl:"https://djlcwpyquslmuhqymqip.supabase.co",sbKey:"PASTE-ANON-KEY-HERE"},LS.get("dc_settings",{}));
+let S=Object.assign({anthropicKey:"",model:"claude-sonnet-5-5",titleModel:"claude-opus-5-5",googleKey:"",sbUrl:"https://djlcwpyquslmuhqymqip.supabase.co",sbKey:"sb_publishable_g3caGhTyfmWt0YlEvsPjhw_S1YdSUYY"},LS.get("dc_settings",{}));
 const saveSettings=()=>LS.set("dc_settings",S);
 
 /* ---------- storage: local or Supabase ---------- */
